@@ -1,0 +1,527 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Electronic License Verification (Local Test)</title>
+    <!-- Load Tailwind CSS for styling -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <!-- Use Inter font family -->
+    <style>
+        @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700&display=swap');
+        body {
+            font-family: 'Inter', sans-serif;
+            background-color: #f7f9fb;
+        }
+        .card {
+            box-shadow: 0 10px 15px -3px rgba(0, 0, 0, 0.1), 0 4px 6px -2px rgba(0, 0, 0, 0.05);
+            transition: transform 0.3s ease;
+        }
+        .card:hover {
+            transform: translateY(-2px);
+        }
+        /* Custom scrollbar for review queue */
+        #reviewQueueOutput {
+            scrollbar-width: thin;
+            scrollbar-color: #9ca3af #f3f4f6;
+        }
+        #reviewQueueOutput::-webkit-scrollbar {
+            width: 8px;
+        }
+        #reviewQueueOutput::-webkit-scrollbar-thumb {
+            background-color: #9ca3af;
+            border-radius: 10px;
+        }
+    </style>
+</head>
+<body class="p-4 md:p-8 min-h-screen flex items-start justify-center">
+
+    <div class="w-full max-w-7xl">
+        <header class="text-center mb-10">
+            <h1 class="text-3xl font-bold text-gray-800">Electronic License Verification System</h1>
+            <p class="text-gray-500 mt-2">OCR scan, automatic validation, and audit trail for vehicle access.</p>
+        </header>
+
+        <!-- Main 3-Column Layout -->
+        <div class="grid grid-cols-1 lg:grid-cols-3 gap-8">
+            
+            <!-- Upload Panel -->
+            <div class="card bg-white p-6 rounded-xl border border-gray-200">
+                <h2 class="text-xl font-semibold mb-4 text-indigo-600">1. Upload License Image</h2>
+                
+                <p id="userIdDisplay" class="text-xs text-gray-500 mb-4 truncate">User ID: Loading...</p>
+                
+                <!-- File Input (FIXED: Added onchange handler) -->
+                <input type="file" id="licenseFileInput" accept="image/*" onchange="previewImage()" class="w-full text-sm text-gray-700
+                    file:mr-4 file:py-2 file:px-4
+                    file:rounded-full file:border-0
+                    file:text-sm file:font-semibold
+                    file:bg-indigo-50 file:text-indigo-600
+                    hover:file:bg-indigo-100
+                ">
+
+                <!-- Image Preview -->
+                <div class="mt-6 border-2 border-dashed border-gray-300 rounded-lg p-4 h-64 flex items-center justify-center bg-gray-50">
+                    <img id="imagePreview" src="https://placehold.co/400x256/E0E7FF/5B21B6?text=Image+Preview" alt="License Preview" class="max-h-full max-w-full rounded-lg object-contain" onerror="this.onerror=null; this.src='https://placehold.co/400x256/E0E7FF/5B21B6?text=Image+Preview';" style="display: block;">
+                </div>
+
+                <!-- Process Button -->
+                <button id="processButton" class="mt-6 w-full py-3 px-4 bg-indigo-600 text-white font-semibold rounded-lg hover:bg-indigo-700 focus:outline-none focus:ring-4 focus:ring-indigo-500 focus:ring-opacity-50 transition duration-150 ease-in-out disabled:bg-indigo-300">
+                    <span id="buttonText">Extract & Validate License</span>
+                    <svg id="loadingSpinner" class="animate-spin -ml-1 mr-3 h-5 w-5 text-white inline-block hidden" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+                        <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
+                        <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+                    </svg>
+                </button>
+            </div>
+            
+            <!-- Result Panel -->
+            <div class="card bg-white p-6 rounded-xl border border-gray-200">
+                <h2 class="text-xl font-semibold mb-4 text-green-600">2. Validation Status & Data</h2>
+                
+                <!-- Message Box (Validation Status) -->
+                <div id="messageBox" class="p-4 rounded-lg bg-blue-50 text-blue-800 border border-blue-200 mb-4 font-medium" role="alert">
+                    System initializing...
+                </div>
+                
+                <!-- Main Validation Result -->
+                <div id="validationStatus" class="p-4 bg-gray-100 rounded-lg mb-4 text-center">
+                    <p class="text-xl font-bold text-gray-500">Awaiting Scan</p>
+                </div>
+
+                <!-- Structured Data Output -->
+                <div id="resultOutput" class="space-y-3">
+                    <!-- Data fields will be inserted here -->
+                </div>
+            </div>
+
+            <!-- Admin Review Queue Panel -->
+            <div class="card bg-white p-6 rounded-xl border border-gray-200">
+                <h2 class="text-xl font-semibold mb-4 text-orange-600">3. Admin Review Queue (Audit)</h2>
+                <p class="text-sm text-gray-500 mb-4">Click to manually override status for required reviews.</p>
+                <div id="reviewQueueOutput" class="space-y-3 max-h-[500px] overflow-y-auto">
+                    <p class="text-gray-500 text-sm italic p-2">Loading queue...</p>
+                </div>
+            </div>
+
+        </div>
+    </div>
+
+    <script type="module">
+        import { initializeApp } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-app.js";
+        import { getAuth, signInAnonymously, onAuthStateChanged } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js";
+        import { getFirestore, collection, addDoc, onSnapshot, query, serverTimestamp, doc, updateDoc } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
+        
+        // =========================================================================
+        // --- LOCAL RUNNING SETUP ---
+        // 
+        // 1. GEMINI API KEY: Your key is correctly placed here.
+        const apiKey = "AIzaSyCY03NyHzc98cjOKpdtxDbFj9ki__3a7i8"; 
+        const API_URL = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-preview-09-2025:generateContent?key=${apiKey}`;
+
+        const appId = 'local-license-app'; // App ID for local Firestore pathing
+        
+        // 2. FIREBASE CONFIG: IMPORTANT - Replace this placeholder with your own project's Web App configuration
+        // to enable persistence (Review Queue/Audit Log).
+        const firebaseConfig = {
+            apiKey: "YOUR_FIREBASE_API_KEY",
+            authDomain: "YOUR_PROJECT_ID.firebaseapp.com",
+            projectId: "YOUR_PROJECT_ID",
+            storageBucket: "YOUR_PROJECT_ID.appspot.com",
+            messagingSenderId: "123456789012",
+            appId: "1:123456789012:web:abcdef1234567890abcdef"
+        };
+        // =========================================================================
+
+        // --- Firebase State ---
+        let db;
+        let auth;
+        let currentUserId = null;
+        let isFirebaseReady = false;
+
+        // --- Firebase & Auth Initialization ---
+        async function initFirebaseAndAuth() {
+            const isGeminiPlaceholder = apiKey.includes("YOUR_GEMINI_API_KEY");
+            const isFirebasePlaceholder = firebaseConfig.apiKey.includes("YOUR_FIREBASE_API_KEY");
+
+            if (isGeminiPlaceholder) {
+                updateMessageBox("WARNING: Replace 'YOUR_GEMINI_API_KEY_HERE' in the code to enable scanning.", 'warn');
+            }
+            
+            if (isFirebasePlaceholder) {
+                document.getElementById('reviewQueueOutput').innerHTML = '<p class="text-gray-500 text-sm italic p-2">Review Queue disabled: Configure Firebase to enable persistence.</p>';
+                document.getElementById('userIdDisplay').textContent = `User ID: Not authenticated`;
+                updateMessageBox("WARNING: Replace Firebase config placeholders to enable persistence (Review Queue).", 'warn');
+                isFirebaseReady = false;
+                // EXIT EARLY to prevent the Firebase API Key error
+                return; 
+            }
+
+            try {
+                const app = initializeApp(firebaseConfig);
+                db = getFirestore(app);
+                auth = getAuth(app);
+
+                // For local testing, we rely on Anonymous Sign-in
+                await signInAnonymously(auth);
+                
+                onAuthStateChanged(auth, (user) => {
+                    if (user) {
+                        currentUserId = user.uid;
+                        isFirebaseReady = true;
+                        document.getElementById('userIdDisplay').textContent = `User ID: ${currentUserId}`;
+                        updateMessageBox(`Authentication successful. User ${currentUserId.substring(0, 8)}... is signed in.`, 'info');
+                        loadReviewQueue(); 
+                    } else {
+                        currentUserId = crypto.randomUUID(); // Fallback
+                        document.getElementById('userIdDisplay').textContent = `User ID (Anon): ${currentUserId}`;
+                        updateMessageBox("Signed in anonymously. System ready.", 'info');
+                        loadReviewQueue(); 
+                    }
+                });
+
+            } catch (error) {
+                console.error("Firebase initialization or authentication error:", error);
+                updateMessageBox(`Firebase Init Error: ${error.message}`, 'error');
+            }
+        }
+        
+        // --- Utility Functions ---
+
+        function fileToBase64(file) {
+            return new Promise((resolve, reject) => {
+                const reader = new FileReader();
+                reader.onload = () => {
+                    const base64Data = reader.result.split(',')[1];
+                    resolve({ base64Data, mimeType: file.type });
+                };
+                reader.onerror = error => reject(error);
+                reader.readAsDataURL(file);
+            });
+        }
+
+        async function fetchWithBackoff(url, options, maxRetries = 5) {
+            for (let i = 0; i < maxRetries; i++) {
+                try {
+                    const response = await fetch(url, options);
+                    if (!response.ok) {
+                        const errorBody = await response.text();
+                        console.error(`Attempt ${i + 1} failed with status: ${response.status}`, errorBody);
+                        if (response.status === 429 || response.status >= 500) {
+                            const delay = Math.pow(2, i) * 1000 + Math.random() * 1000;
+                            await new Promise(resolve => setTimeout(resolve, delay));
+                            continue;
+                        } else {
+                            throw new Error(`API failed with status ${response.status}: ${errorBody.substring(0, 200)}...`);
+                        }
+                    }
+                    return response;
+                } catch (error) {
+                    console.error("Fetch error:", error);
+                    if (i === maxRetries - 1) throw error;
+                    const delay = Math.pow(2, i) * 1000 + Math.random() * 1000;
+                    await new Promise(resolve => setTimeout(resolve, delay));
+                }
+            }
+        }
+        
+        // --- UI Handlers ---
+
+        function updateUIState(isLoading) {
+            const button = document.getElementById('processButton');
+            const buttonText = document.getElementById('buttonText');
+            const spinner = document.getElementById('loadingSpinner');
+            
+            button.disabled = isLoading;
+            buttonText.textContent = isLoading ? 'Processing...' : 'Extract & Validate License';
+            spinner.classList.toggle('hidden', !isLoading);
+            
+            document.getElementById('licenseFileInput').disabled = isLoading;
+        }
+
+        function updateMessageBox(text, type = 'info') {
+            const box = document.getElementById('messageBox');
+            box.textContent = text;
+            box.className = 'p-4 rounded-lg mb-4 border font-medium';
+            switch (type) {
+                case 'success': box.classList.add('bg-green-50', 'text-green-800', 'border-green-200'); break;
+                case 'error': box.classList.add('bg-red-50', 'text-red-800', 'border-red-200'); break;
+                case 'warn': box.classList.add('bg-yellow-50', 'text-yellow-800', 'border-yellow-200'); break;
+                case 'info': default: box.classList.add('bg-blue-50', 'text-blue-800', 'border-blue-200'); break;
+            }
+        }
+        
+        function displayResults(data, validation) {
+            const outputDiv = document.getElementById('resultOutput');
+            const statusDiv = document.getElementById('validationStatus');
+            outputDiv.innerHTML = ''; 
+
+            let statusColor, statusText;
+            switch (validation.status) {
+                case 'VERIFIED':
+                    statusColor = 'bg-green-600 text-white'; statusText = 'ACCESS GRANTED'; break;
+                case 'EXPIRED':
+                    statusColor = 'bg-red-600 text-white'; statusText = 'ACCESS DENIED: EXPIRED'; break;
+                case 'NEEDS_REVIEW':
+                    statusColor = 'bg-yellow-600 text-gray-800'; statusText = 'MANUAL REVIEW REQUIRED'; break;
+                case 'DENIED':
+                    statusColor = 'bg-red-600 text-white'; statusText = 'ACCESS DENIED'; break;
+                default:
+                    statusColor = 'bg-gray-400 text-white'; statusText = 'ERROR';
+            }
+            statusDiv.className = `p-4 rounded-lg mb-4 text-center ${statusColor}`;
+            statusDiv.innerHTML = `<p class="text-2xl font-black">${statusText}</p>`;
+            
+            updateMessageBox(`Validation Result: ${validation.message}`, validation.status === 'VERIFIED' ? 'success' : 'warn');
+
+            const fields = [
+                { key: 'fullName', label: 'Full Name', icon: '👤' },
+                { key: 'licenseNumber', label: 'License Number', icon: '🔢' },
+                { key: 'expirationDate', label: 'Expiration Date', icon: '📅' },
+                { key: 'licenseClass', label: 'Class', icon: '🚗' }
+            ];
+
+            fields.forEach(field => {
+                const value = data[field.key] || 'N/A';
+                const item = document.createElement('div');
+                item.className = 'flex justify-between items-center p-3 bg-gray-50 border border-gray-200 rounded-lg';
+                item.innerHTML = `
+                    <div class="flex items-center">
+                        <span class="text-xl mr-3">${field.icon}</span>
+                        <span class="text-sm font-medium text-gray-500">${field.label}:</span>
+                    </div>
+                    <span class="text-base font-semibold text-gray-800">${value}</span>
+                `;
+                outputDiv.appendChild(item);
+            });
+        }
+
+        // --- Logic ---
+
+        window.previewImage = function() {
+            const fileInput = document.getElementById('licenseFileInput');
+            const preview = document.getElementById('imagePreview');
+            const file = fileInput.files[0];
+
+            // Reset UI elements when a new file is selected
+            document.getElementById('resultOutput').innerHTML = '';
+            document.getElementById('validationStatus').innerHTML = '<p class="text-xl font-bold text-gray-500">Awaiting Scan</p>';
+            document.getElementById('validationStatus').className = 'p-4 bg-gray-100 rounded-lg mb-4 text-center';
+
+            if (file) {
+                const reader = new FileReader();
+                reader.onload = (e) => {
+                    preview.src = e.target.result;
+                    preview.style.display = 'block';
+                    updateMessageBox("Image loaded. Click 'Extract & Validate License' to process.", 'info');
+                };
+                reader.readAsDataURL(file);
+            } else {
+                preview.src = "https://placehold.co/400x256/E0E7FF/5B21B6?text=Image+Preview";
+                updateMessageBox("Please upload an image.", 'info');
+            }
+        }
+        
+        function performClientValidation(data) {
+            const today = new Date();
+            today.setHours(0, 0, 0, 0); 
+            const expiryDate = data.expirationDate ? new Date(data.expirationDate) : null;
+            
+            // Check if the AI successfully detected the license at all
+            if (data.isDetected === false) {
+                 return { status: 'DENIED', message: 'License object not clearly detected in image. ACCESS DENIED (Review Needed).' };
+            }
+
+            if (expiryDate && data.expirationDate !== 'UNKNOWN') {
+                if (expiryDate < today) {
+                    return { status: 'EXPIRED', message: 'License is expired. ACCESS DENIED.' };
+                } else {
+                    return { status: 'VERIFIED', message: 'License is valid. ACCESS GRANTED.' };
+                }
+            } else {
+                // If isDetected is true but expirationDate is UNKNOWN, it needs review
+                return { status: 'NEEDS_REVIEW', message: 'Expiration date missing or unreadable. Manual review required.' };
+            }
+        }
+
+        async function saveVerification(data, validation) {
+            // Guard clause for local mode if Firebase is not configured
+            if (!isFirebaseReady || !db || !currentUserId) return;
+
+            const collectionPath = `artifacts/${appId}/public/data/license_verifications`;
+            try {
+                await addDoc(collection(db, collectionPath), {
+                    userId: currentUserId,
+                    timestamp: serverTimestamp(),
+                    status: validation.status,
+                    validationMessage: validation.message,
+                    extractedData: data,
+                    isManualReview: validation.status === 'NEEDS_REVIEW' || validation.status === 'DENIED', // Flag for initial review status
+                    adminReviewedBy: null,
+                });
+            } catch (e) {
+                console.error("Error saving verification:", e);
+                updateMessageBox(`Error saving verification to Firestore: ${e.message}. Check your Firebase Config and Rules.`, 'error');
+            }
+        }
+        
+        window.updateReviewStatus = async function(docId, newStatus) {
+            // Guard clause for local mode if Firebase is not configured
+            if (!isFirebaseReady || !db || !currentUserId) {
+                updateMessageBox("Firestore not configured. Cannot update status.", 'error');
+                return;
+            }
+            
+            const docRef = doc(db, `artifacts/${appId}/public/data/license_verifications`, docId);
+            try {
+                // Update status and clear the manual review flag by setting adminReviewedBy
+                await updateDoc(docRef, {
+                    status: newStatus,
+                    validationMessage: `Manual override: ${newStatus}`,
+                    adminReviewedBy: currentUserId,
+                    isManualReview: false, // Explicitly set to false after review action
+                });
+                updateMessageBox(`Record updated to ${newStatus}.`, 'success');
+            } catch (e) {
+                updateMessageBox(`Update failed: ${e.message}`, 'error');
+            }
+        }
+
+        function loadReviewQueue() {
+            // Guard clause for local mode if Firebase is not configured
+            if (!isFirebaseReady || !db) {
+                document.getElementById('reviewQueueOutput').innerHTML = '<p class="text-gray-500 text-sm italic p-2">Review Queue disabled: Configure Firebase to enable persistence.</p>';
+                return;
+            }
+
+            const reviewQueueDiv = document.getElementById('reviewQueueOutput');
+            const q = query(collection(db, `artifacts/${appId}/public/data/license_verifications`));
+            
+            onSnapshot(q, (snapshot) => {
+                reviewQueueDiv.innerHTML = '';
+                if (snapshot.empty) {
+                    reviewQueueDiv.innerHTML = '<p class="text-gray-500 text-sm italic p-2">Queue empty.</p>';
+                    return;
+                }
+
+                snapshot.docs.forEach((docSnap) => {
+                    const data = docSnap.data();
+                    const docId = docSnap.id;
+                    let statusClass, icon, isActionable;
+
+                    // Determine display status and if manual action is needed
+                    const requiresAction = data.isManualReview && !data.adminReviewedBy;
+
+                    switch (data.status) {
+                        case 'VERIFIED': statusClass = 'bg-green-100 border-green-400'; icon = '✅'; isActionable = false; break;
+                        case 'EXPIRED': statusClass = 'bg-red-100 border-red-400'; icon = '🛑'; isActionable = false; break;
+                        case 'DENIED': statusClass = 'bg-red-100 border-red-400'; icon = '❌'; isActionable = requiresAction; break;
+                        case 'NEEDS_REVIEW': 
+                        default: statusClass = 'bg-yellow-100 border-yellow-400'; icon = '⚠️'; isActionable = requiresAction; break;
+                    }
+                    
+                    if (data.adminReviewedBy) {
+                        statusClass = 'bg-blue-100 border-blue-400';
+                    }
+
+
+                    let actionButtons = '';
+                    if (isActionable) {
+                        actionButtons = `
+                            <div class="mt-2 flex space-x-2">
+                                <button onclick="updateReviewStatus('${docId}', 'VERIFIED')" class="flex-1 px-2 py-1 text-xs font-bold bg-green-500 text-white rounded hover:bg-green-600">Verify</button>
+                                <button onclick="updateReviewStatus('${docId}', 'DENIED')" class="flex-1 px-2 py-1 text-xs font-bold bg-red-500 text-white rounded hover:bg-red-600">Deny</button>
+                            </div>`;
+                    }
+
+                    const item = document.createElement('div');
+                    item.className = `p-3 rounded-xl border mb-3 shadow-md ${statusClass}`;
+                    item.innerHTML = `
+                        <div class="font-bold text-gray-800 flex items-center"><span class="mr-2">${icon}</span> ${data.extractedData?.fullName || 'Unknown'}</div>
+                        <div class="text-xs text-gray-600">ID: ${docId.substring(0, 6)}... | Status: ${data.status}</div>
+                        <div class="text-xs italic text-gray-700 mt-1">${data.validationMessage}</div>
+                        ${data.adminReviewedBy ? `<div class="text-xs text-blue-700 font-semibold mt-1">Reviewed by: ${data.adminReviewedBy.substring(0, 8)}...</div>` : ''}
+                        ${actionButtons}
+                    `;
+                    // Prepend to show newest at the top
+                    reviewQueueDiv.prepend(item);
+                });
+            });
+        }
+
+        window.processImage = async function() {
+            const file = document.getElementById('licenseFileInput').files[0];
+            if (!file) { updateMessageBox("Select an image first.", 'warn'); return; }
+            if (apiKey.includes("YOUR_GEMINI_API_KEY")) {
+                updateMessageBox("Scanning blocked: Please replace 'YOUR_GEMINI_API_KEY_HERE' with your actual key.", 'error'); 
+                return;
+            }
+
+            try {
+                updateUIState(true);
+                updateMessageBox('Scanning license with AI...', 'info');
+                const { base64Data, mimeType } = await fileToBase64(file);
+                
+                const prompt = "Extract license data. Dates should be strictly formatted as YYYY-MM-DD. If a field is unreadable, use 'UNKNOWN'. If no driver's license object is clearly visible, set isDetected to false.";
+
+                const responseSchema = {
+                    type: "OBJECT",
+                    properties: {
+                        "fullName": { "type": "STRING" }, "licenseNumber": { "type": "STRING" },
+                        "dateOfBirth": { "type": "STRING" }, "expirationDate": { "type": "STRING" },
+                        "licenseClass": { "type": "STRING" }, "issuingAuthority": { "type": "STRING" },
+                        "isDetected": { "type": "BOOLEAN" } 
+                    },
+                    required: ["fullName", "licenseNumber", "expirationDate", "isDetected"]
+                };
+
+                // --- FIX APPLIED HERE: Separate text and image into different parts ---
+                const payload = {
+                    contents: [{ 
+                        role: "user", 
+                        parts: [
+                            { text: prompt }, // Part 1: Text prompt
+                            { inlineData: { mimeType, data: base64Data } } // Part 2: Image data
+                        ] 
+                    }],
+                    generationConfig: { responseMimeType: "application/json", responseSchema: responseSchema }
+                };
+                // ---------------------------------------------------------------------
+
+                const response = await fetchWithBackoff(API_URL, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
+                const result = await response.json();
+                
+                if (result.candidates?.[0]?.content?.parts?.[0]?.text) {
+                    let jsonStr = result.candidates[0].content.parts[0].text;
+                    // Clean up potential markdown formatting around JSON
+                    jsonStr = jsonStr.replace(/```json|```/g, '').trim();
+                    
+                    const data = JSON.parse(jsonStr);
+                    const validation = performClientValidation(data);
+                    displayResults(data, validation);
+                    await saveVerification(data, validation);
+                } else {
+                    updateMessageBox("AI scan failed. Please check your API key and network connection.", 'error');
+                }
+            } catch (e) {
+                updateMessageBox(`Error during processing: ${e.message}`, 'error');
+            } finally {
+                updateUIState(false);
+            }
+        }
+
+        // Initialize
+        document.addEventListener('DOMContentLoaded', () => {
+            // Bind process button
+            const btn = document.getElementById('processButton');
+            if(btn) btn.addEventListener('click', window.processImage);
+            
+            // Note: The file input binding is in the HTML via onchange="previewImage()"
+            
+            initFirebaseAndAuth();
+        });
+
+    </script>
+
+</body>
+</html>

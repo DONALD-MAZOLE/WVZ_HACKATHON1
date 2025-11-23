@@ -1,0 +1,700 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Finance_Portal</title>
+    <!-- Load Tailwind CSS -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <style>
+        body {
+            font-family: 'Inter', sans-serif;
+            background-color: #eef2f8; /* Very light blue-gray background */
+        }
+        .data-card {
+            box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1), 0 2px 4px -2px rgba(0, 0, 0, 0.06);
+            transition: transform 0.2s;
+        }
+        .data-card:hover {
+            transform: translateY(-2px);
+        }
+        /* Custom scrollbar for tables */
+        .table-container {
+            max-height: 400px;
+            overflow-y: auto;
+        }
+        /* Custom styles for the Report output areas */
+        .report-output {
+            white-space: pre-wrap;
+            font-family: monospace; /* Monospace for report feel */
+            line-height: 1.4;
+        }
+    </style>
+    <!-- Load Firebase SDKs -->
+    <script type="module">
+        import { initializeApp } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-app.js";
+        import { getAuth, signInAnonymously, signInWithCustomToken, onAuthStateChanged } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js";
+        import { getFirestore, collection, addDoc, onSnapshot } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
+
+        // Global variables provided by the Canvas environment (used as fallback for local VS Code runs)
+        const appId = typeof __app_id !== 'undefined' ? __app_id : 'default-app-id';
+        const firebaseConfig = JSON.parse(typeof __firebase_config !== 'undefined' ? __firebase_config : '{}');
+        const initialAuthToken = typeof __initial_auth_token !== 'undefined' ? __initial_auth_token : null;
+
+        // --- API Key Configuration (Using separate keys as requested for local debugging) ---
+        // These keys are hardcoded here to bypass environment authentication failures for the LLM calls.
+        const EPR_API_KEY = "AIzaSyCMTD7w2kL_yAN1aVX8DQ6eC7Hp0Sk6rT0"; 
+        const AUDIT_API_KEY = "AIzaSyA93ri0Gra-BGW5Lm7opMyGwjDvwyxS9U8";
+        // -----------------------------------------------------------------------------------
+        
+        const BASE_AI_MODEL = "gemini-2.5-flash-preview-09-2025";
+        
+        let app, db, auth;
+        let userId = null; 
+        let isAuthReady = false;
+
+        /**
+         * Returns the correct API URL, including the assigned API Key.
+         */
+        function getApiUrl(apiKey) {
+            // If the key is empty, the platform is expected to inject it.
+            // If the key is provided (as above), it is used explicitly.
+            const key = apiKey || "";
+            return `https://generativelanguage.googleapis.com/v1beta/models/${BASE_AI_MODEL}:generateContent?key=${key}`;
+        }
+        // --------------------------------
+
+        // --- Utility Functions ---
+
+        /**
+         * Robust fetch utility with exponential backoff for retries.
+         */
+        async function fetchWithBackoff(url, options, maxRetries = 5) {
+            for (let i = 0; i < maxRetries; i++) {
+                try {
+                    const response = await fetch(url, options);
+                    if (!response.ok) {
+                        const errorBody = await response.text();
+                        console.error(`Attempt ${i + 1} failed with status: ${response.status}`, errorBody);
+                        if (response.status === 429 || response.status >= 500) { 
+                            const delay = Math.pow(2, i) * 1000 + Math.random() * 1000;
+                            await new Promise(resolve => setTimeout(resolve, delay));
+                            continue;
+                        } else {
+                            throw new Error(`API failed with status ${response.status}: ${errorBody.substring(0, 200)}...`);
+                        }
+                    }
+                    return response;
+                } catch (error) {
+                    console.error("Fetch error:", error);
+                    if (i === maxRetries - 1) throw error;
+                    const delay = Math.pow(2, i) * 1000 + Math.random() * 1000;
+                    await new Promise(resolve => setTimeout(resolve, delay));
+                }
+            }
+        }
+        
+        /**
+         * Updates the status message box for the EPR generation feature.
+         */
+        function updateEPRStatus(message, type = 'info') {
+            const box = document.getElementById('eprStatus');
+            updateStatusBox(box, message, type);
+        }
+
+        /**
+         * Updates the status message box for the Audit generation feature.
+         */
+        function updateAuditStatus(message, type = 'info') {
+            const box = document.getElementById('auditStatus');
+            updateStatusBox(box, message, type);
+        }
+
+        /**
+         * Generic helper to style a status box.
+         */
+        function updateStatusBox(box, message, type = 'info') {
+             box.textContent = message;
+            box.classList.remove('hidden', 'bg-red-100', 'text-red-800', 'bg-green-100', 'text-green-800', 'bg-gray-50', 'text-gray-700', 'bg-indigo-100', 'text-indigo-800');
+            
+            switch (type) {
+                case 'error': box.classList.add('bg-red-100', 'text-red-800'); break;
+                case 'success': box.classList.add('bg-green-100', 'text-green-800'); break;
+                case 'info': default: box.classList.add('bg-indigo-100', 'text-indigo-800'); break;
+            }
+            box.classList.remove('hidden');
+        }
+
+
+        // --- Mock Data Structure (Simulating Data from Firestore) ---
+        const MOCK_FINANCE_DATA = {
+            totalOperationalCost: 185200.50, // ZMW
+            totalFuelCost: 75900.25, // ZMW
+            totalDistance: 125400, // KM
+            costPerKm: 1.47, // ZMW/KM
+
+            costCenterBreakdown: [
+                { center: 'Health Programs', cost: 55000, km: 35000, color: 'bg-red-500' },
+                { center: 'Education & Child Protection', cost: 42500, km: 30000, color: 'bg-blue-500' },
+                { center: 'Administration & HR', cost: 35200, km: 25000, color: 'bg-yellow-500' },
+                { center: 'WASH & Infrastructure', cost: 52500, km: 35400, color: 'bg-green-500' },
+            ],
+            
+            monthlyFuelConsumption: [
+                { month: 'Jan', consumption: 3500, cost: 12000 },
+                { month: 'Feb', consumption: 3200, cost: 11500 },
+                { month: 'Mar', consumption: 4000, cost: 14000 },
+                { month: 'Apr', consumption: 3800, cost: 13500 },
+                { month: 'May', consumption: 4500, cost: 15500 },
+                { month: 'Jun', consumption: 4100, cost: 14400 },
+            ]
+        };
+
+        function formatCurrency(amount) {
+            return `ZMW ${amount.toLocaleString('en-US', { minimumFractionDigits: 2 })}`;
+        }
+
+        function renderKPIs(data) {
+            document.getElementById('totalOperationalCost').textContent = formatCurrency(data.totalOperationalCost);
+            document.getElementById('totalFuelCost').textContent = formatCurrency(data.totalFuelCost);
+            document.getElementById('totalDistance').textContent = `${data.totalDistance.toLocaleString('en-US')} KM`;
+            document.getElementById('costPerKm').textContent = `ZMW ${data.costPerKm.toFixed(2)} / KM`;
+        }
+
+        function renderCostCenterTable(data) {
+            const container = document.getElementById('costCenterBody');
+            if (!container) return; 
+            container.innerHTML = '';
+            
+            data.costCenterBreakdown.forEach((item, index) => {
+                const percentage = ((item.cost / data.totalOperationalCost) * 100).toFixed(1);
+                const row = `
+                    <tr class="${index % 2 === 0 ? 'bg-white' : 'bg-gray-50'} hover:bg-indigo-50/50 transition-colors">
+                        <td class="px-6 py-3 whitespace-nowrap text-sm font-medium text-gray-900">
+                            <span class="inline-block w-3 h-3 ${item.color} rounded-full mr-2"></span>
+                            ${item.center}
+                        </td>
+                        <td class="px-6 py-3 whitespace-nowrap text-sm text-gray-500">${formatCurrency(item.cost)}</td>
+                        <td class="px-6 py-3 whitespace-nowrap text-sm text-gray-500">${item.km.toLocaleString('en-US')} KM</td>
+                        <td class="px-6 py-3 whitespace-nowrap text-sm font-semibold text-gray-700">${percentage}%</td>
+                    </tr>
+                `;
+                container.insertAdjacentHTML('beforeend', row);
+            });
+        }
+
+        function renderFuelChart(data) {
+            const chartData = data.monthlyFuelConsumption;
+            const maxConsumption = Math.max(...chartData.map(d => d.consumption)) * 1.1; // 10% buffer
+            const chartContainer = document.getElementById('fuelChart');
+            if (!chartContainer) return; 
+            chartContainer.innerHTML = ''; 
+
+            chartData.forEach(item => {
+                const barHeight = (item.consumption / maxConsumption) * 100; // Calculate height percentage
+                const bar = `
+                    <div class="flex flex-col items-center justify-end h-full w-1/6">
+                        <div class="w-4/5 bg-blue-400 rounded-t-lg shadow-md transition-all duration-500 hover:bg-blue-600"
+                             style="height: ${barHeight}%;"
+                             title="${item.month}: ${item.consumption} Liters">
+                        </div>
+                        <span class="text-xs font-medium text-gray-500 mt-1">${item.month}</span>
+                    </div>
+                `;
+                chartContainer.insertAdjacentHTML('beforeend', bar);
+            });
+        }
+
+        function loadFinanceData() {
+            const data = MOCK_FINANCE_DATA;
+            renderKPIs(data);
+            renderCostCenterTable(data);
+            renderFuelChart(data);
+            const loadingIndicator = document.getElementById('loadingIndicator');
+            if (loadingIndicator) {
+                 loadingIndicator.classList.add('hidden');
+            }
+        }
+        
+        // --- Shared Financial Data Prompt Builder ---
+
+        function getFinancialDataPrompt() {
+            return `
+FINANCIAL SUMMARY DATA (For context and inclusion in report):
+Total Operational Cost: ${MOCK_FINANCE_DATA.totalOperationalCost.toFixed(2)} ZMW
+Total Fuel Cost: ${MOCK_FINANCE_DATA.totalFuelCost.toFixed(2)} ZMW
+Total Distance: ${MOCK_FINANCE_DATA.totalDistance.toLocaleString()} KM
+Cost Per KM: ${MOCK_FINANCE_DATA.costPerKm.toFixed(2)} ZMW/KM
+
+COST CENTER BREAKDOWN (Cost, KM):
+${MOCK_FINANCE_DATA.costCenterBreakdown.map(c => `- ${c.center}: ${c.cost.toFixed(2)} ZMW / ${c.km.toLocaleString()} KM`).join('\n')}
+
+FUEL CONSUMPTION TREND (LITERS & COST - JAN TO JUN):
+${MOCK_FINANCE_DATA.monthlyFuelConsumption.map(m => `- ${m.month}: ${m.consumption} Liters (Cost: ${m.cost.toFixed(2)} ZMW)`).join('\n')}
+            `;
+        }
+
+        // --- EPR Generator Logic ---
+
+        function getEPRInputs() {
+            return {
+                name: document.getElementById('eprName').value.trim(),
+                rank: document.getElementById('eprRank').value.trim(),
+                period: document.getElementById('eprPeriod').value.trim(),
+                achievements: document.getElementById('eprAchievements').value.trim(),
+                weaknesses: document.getElementById('eprWeaknesses').value.trim(),
+                output: document.getElementById('eprOutput').textContent.trim()
+            };
+        }
+
+        window.generateEPR = async function() {
+            const inputs = getEPRInputs();
+            const { name, rank, achievements, period, weaknesses } = inputs;
+            
+            const generateButton = document.getElementById('generateEPRButton');
+            const downloadButton = document.getElementById('downloadPDFSourceButton');
+            const submitButton = document.getElementById('submitReportButton');
+            const outputDiv = document.getElementById('eprOutput');
+
+            downloadButton.classList.add('hidden');
+            submitButton.classList.add('hidden');
+
+            if (!name || !rank || !achievements) {
+                updateEPRStatus("Please fill in Rank, Name, and Key Achievements.", 'error');
+                return;
+            }
+
+            const financeDataPrompt = getFinancialDataPrompt();
+            
+            const prompt = `
+                Act as a professional military performance evaluator and financial liaison. 
+                Write a single, comprehensive "Performance and Resource Management Report" for the individual below.
+                The report must seamlessly integrate the EPR narrative with the provided financial data, specifically citing cost center and fuel efficiency trends.
+                
+                Structure the output strictly as a plaintext document using capitalized headings and double line breaks. Do not use markdown, bullets, or numbering, only plain text.
+                
+                ---
+                
+                REPORT TITLE: Performance and Resource Management Report
+                
+                MEMBER DETAILS:
+                NAME: ${name}
+                RANK: ${rank}
+                REPORTING PERIOD: ${period || 'Current Evaluation Cycle'}
+                
+                SECTION 1: FINANCIAL RESOURCE OVERSIGHT
+                (Use the Financial Summary Data and Breakdown provided below to create a narrative paragraph summarizing performance related to cost, distance, and fuel use. Highlight any relevant cost efficiency implied by the member's achievements.)
+                
+                SECTION 2: MEMBER KEY ACHIEVEMENTS
+                (Transform the provided achievements into formal, impactful military narrative paragraphs.)
+                
+                SECTION 3: AREAS FOR DEVELOPMENT
+                (Address the improvement points professionally and suggest growth.)
+                
+                ---
+                
+                RAW INPUT DATA:
+                
+                ACHIEVEMENTS:
+                ${achievements}
+                
+                AREAS FOR IMPROVEMENT:
+                ${weaknesses || 'N/A'}
+
+                ${financeDataPrompt}
+            `;
+            
+            try {
+                generateButton.disabled = true;
+                generateButton.innerHTML = '<div class="flex items-center justify-center"><svg class="animate-spin h-5 w-5 text-white mr-3" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24"><circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle><path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path></svg> Generating Integrated Report...</div>';
+                updateEPRStatus(`Preparing integrated performance and finance narrative...`, 'info');
+
+                const payload = {
+                    contents: [{ parts: [{ text: prompt }] }],
+                };
+
+                // Use the EPR-specific API key
+                const apiUrl = getApiUrl(EPR_API_KEY);
+
+                const response = await fetchWithBackoff(apiUrl, { 
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(payload)
+                });
+                
+                const result = await response.json();
+                
+                if (result.candidates && result.candidates.length > 0 && result.candidates[0].content?.parts?.[0]?.text) {
+                    const generatedText = result.candidates[0].content.parts[0].text.trim();
+                    outputDiv.textContent = generatedText;
+                    updateEPRStatus("Integrated Report Draft generated successfully. Review, download the source, or submit.", 'success');
+                    downloadButton.classList.remove('hidden');
+                    submitButton.classList.remove('hidden');
+                } else {
+                    outputDiv.textContent = "Error: Could not retrieve a response from the service. Check console for details.";
+                    updateEPRStatus("Generation failed. Check API response in console.", 'error');
+                }
+
+            } catch (e) {
+                console.error("EPR Generation Error:", e);
+                outputDiv.textContent = `A critical error occurred: ${e.message}`;
+                updateEPRStatus(`EPR Generation failed: ${e.message}`, 'error');
+            } finally {
+                generateButton.disabled = false;
+                generateButton.innerHTML = 'Generate Draft Report';
+            }
+        }
+        
+        window.downloadEPRSource = function() {
+            updateEPRStatus("The Integrated Report content is ready for PDF compilation. Copy the generated text and paste it into the 'epr_draft.tex' file.", 'info');
+        }
+
+        window.submitEPR = async function() {
+            const inputs = getEPRInputs();
+            const { name, output } = inputs;
+            
+            if (!output || output.includes("Enter details")) {
+                updateEPRStatus("Please generate the report content before submission.", 'error');
+                return;
+            }
+            if (!db || !userId) {
+                updateEPRStatus("Submission failed: Database not ready or user not logged in.", 'error');
+                return;
+            }
+
+            // Mock submission to Firestore
+            updateEPRStatus(`Report for ${name} submitted to database (mock status: success).`, 'success');
+        }
+
+        // --- Audit Report Generator Logic ---
+        
+        window.generateAuditReport = async function() {
+            const generateButton = document.getElementById('generateAuditButton');
+            const downloadButton = document.getElementById('downloadAuditSourceButton');
+            const submitButton = document.getElementById('submitAuditReportButton');
+            const outputDiv = document.getElementById('auditOutput');
+
+            downloadButton.classList.add('hidden');
+            submitButton.classList.add('hidden');
+
+            const financeDataPrompt = getFinancialDataPrompt();
+            
+            const prompt = `
+                Act as a Certified Public Accountant specializing in non-profit fleet management.
+                Generate a "Financial Reconciliation and Audit Summary" report based on the provided data. 
+                
+                The report must analyze the following:
+                1. Reconciliation of Total Operational Cost vs. Cost Center breakdown.
+                2. Analysis of the Cost per KM metric against the Total Distance.
+                3. Detailed variance analysis for the Monthly Fuel Consumption and associated costs, highlighting any anomalies or potential areas of fraud/waste.
+                4. A concluding summary of financial health and reconciliation recommendations.
+
+                Structure the output strictly as a plaintext document using capitalized headings and double line breaks. Do not use markdown, bullets, or numbering, only plain text.
+
+                ---
+
+                REPORT TITLE: Q2 2025 FLEET FINANCIAL AUDIT SUMMARY
+                
+                ${financeDataPrompt}
+            `;
+            
+            try {
+                generateButton.disabled = true;
+                generateButton.innerHTML = '<div class="flex items-center justify-center"><svg class="animate-spin h-5 w-5 text-white mr-3" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24"><circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle><path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path></svg> Generating Audit Report...</div>';
+                outputDiv.textContent = 'Generating...';
+                updateAuditStatus(`Preparing detailed financial audit summary...`, 'info');
+
+                const payload = {
+                    contents: [{ parts: [{ text: prompt }] }],
+                };
+
+                // Use the Audit-specific API key
+                const apiUrl = getApiUrl(AUDIT_API_KEY);
+
+                const response = await fetchWithBackoff(apiUrl, { 
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(payload)
+                });
+                
+                const result = await response.json();
+                
+                if (result.candidates && result.candidates.length > 0 && result.candidates[0].content?.parts?.[0]?.text) {
+                    const generatedText = result.candidates[0].content.parts[0].text.trim();
+                    outputDiv.textContent = generatedText;
+                    updateAuditStatus("Financial Audit Summary generated successfully. Review, download the source, or submit.", 'success');
+                    downloadButton.classList.remove('hidden');
+                    submitButton.classList.remove('hidden');
+                } else {
+                    outputDiv.textContent = "Error: Could not retrieve a response from the service. Check console for details.";
+                    updateAuditStatus("Audit Generation failed. Check console for API response.", 'error');
+                }
+
+            } catch (e) {
+                console.error("Audit Generation Error:", e);
+                outputDiv.textContent = `A critical error occurred: ${e.message}`;
+                updateAuditStatus(`Audit Generation failed: ${e.message}`, 'error');
+            } finally {
+                generateButton.disabled = false;
+                generateButton.innerHTML = '<svg class="w-4 h-4 inline-block mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4"></path></svg>Generate Audit Report';
+            }
+        }
+
+        window.downloadAuditSource = function() {
+            updateAuditStatus("The Audit Summary content is ready for PDF compilation. Copy the generated text and paste it into the 'audit_summary.tex' file.", 'info');
+        }
+
+        window.submitAuditReport = async function() {
+            const output = document.getElementById('auditOutput').textContent.trim();
+            if (!output || output.includes("Click 'Generate Audit Report'")) {
+                updateAuditStatus("Please generate the report content before submission.", 'error');
+                return;
+            }
+            if (!db || !userId) {
+                updateAuditStatus("Submission failed: Database not ready or user not logged in.", 'error');
+                return;
+            }
+
+            // Mock submission to Firestore
+            updateAuditStatus(`Financial Audit Report submitted to database (mock status: success).`, 'success');
+        }
+
+
+        // --- Initialization Function ---
+
+        async function initApp() {
+             // 1. Initialize Firebase (if config exists)
+             if (Object.keys(firebaseConfig).length > 0) {
+                try {
+                    app = initializeApp(firebaseConfig);
+                    auth = getAuth(app);
+                    db = getFirestore(app);
+                    
+                    // Sign in with custom token or anonymously
+                    const signIn = async () => {
+                        if (initialAuthToken) {
+                            await signInWithCustomToken(auth, initialAuthToken);
+                        } else {
+                            await signInAnonymously(auth);
+                        }
+                    };
+                    await signIn();
+
+                    onAuthStateChanged(auth, (user) => {
+                        if (user) {
+                            userId = user.uid;
+                            document.getElementById('userIdDisplay').textContent = `User ID: ${userId}`;
+                            console.log("Firebase Auth Ready. User ID:", userId);
+                        } else {
+                            userId = crypto.randomUUID(); // Fallback UUID if anonymous sign-in failed
+                        }
+                        isAuthReady = true;
+                        loadFinanceData();
+                    });
+
+                } catch (error) {
+                    console.error("Firebase initialization failed, loading mock data:", error);
+                    loadFinanceData();
+                }
+            } else {
+                console.warn("Firebase configuration is missing. Loading mock data only.");
+                loadFinanceData(); 
+            }
+            
+            // 2. Attach Event Listeners
+            document.getElementById('generateEPRButton')?.addEventListener('click', window.generateEPR);
+            document.getElementById('downloadPDFSourceButton')?.addEventListener('click', window.downloadEPRSource);
+            document.getElementById('submitReportButton')?.addEventListener('click', window.submitEPR);
+            
+            document.getElementById('generateAuditButton')?.addEventListener('click', window.generateAuditReport);
+            document.getElementById('downloadAuditSourceButton')?.addEventListener('click', window.downloadAuditSource); 
+            document.getElementById('submitAuditReportButton')?.addEventListener('click', window.submitAuditReport);     
+        }
+
+        // --- Start Application when DOM is fully loaded ---
+        document.addEventListener('DOMContentLoaded', initApp);
+
+    </script>
+</head>
+<body>
+
+    <div class="min-h-screen">
+        <!-- Navigation Header -->
+        <header class="bg-white shadow-md sticky top-0 z-10">
+            <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-4 flex justify-between items-center">
+                <h1 class="text-2xl font-extrabold text-indigo-700">
+                    MOTA50
+                </h1>
+                <div class="text-sm font-medium text-gray-600">
+                    User: Admin Access (Finance View)
+                    <span id="userIdDisplay" class="ml-4 text-xs text-indigo-500">Connecting...</span>
+                </div>
+            </div>
+        </header>
+
+        <main class="max-w-7xl mx-auto py-8 px-4 sm:px-6 lg:px-8">
+            <h2 class="text-3xl font-bold text-gray-800 mb-6 border-b pb-2">Fleet Financial Overview - Q2 2025</h2>
+            
+            <!-- Loading Indicator -->
+            <div id="loadingIndicator" class="text-center py-10">
+                <div class="animate-spin rounded-full h-12 w-12 border-b-2 border-indigo-500 mx-auto"></div>
+                <p class="mt-4 text-indigo-600">Loading financial data...</p>
+            </div>
+
+            <div class="space-y-8">
+                <!-- 1. Key Performance Indicators (KPIs) -->
+                <div class="grid grid-cols-1 md:grid-cols-4 gap-6">
+                    <div class="data-card bg-white p-6 rounded-xl border-l-4 border-indigo-500">
+                        <p class="text-sm font-medium text-gray-500">Total Operational Cost</p>
+                        <p id="totalOperationalCost" class="mt-1 text-3xl font-semibold text-gray-900">ZMW 0.00</p>
+                        <p class="text-xs text-green-500 mt-1">2.5\% increase from last quarter</p>
+                    </div>
+                    <div class="data-card bg-white p-6 rounded-xl border-l-4 border-orange-500">
+                        <p class="text-sm font-medium text-gray-500">Total Fuel Cost</p>
+                        <p id="totalFuelCost" class="mt-1 text-3xl font-semibold text-gray-900">ZMW 0.00</p>
+                        <p class="text-xs text-red-500 mt-1">4.1\% over budget</p>
+                    </div>
+                    <div class="data-card bg-white p-6 rounded-xl border-l-4 border-teal-500">
+                        <p class="text-sm font-medium text-gray-500">Total Distance Covered</p>
+                        <p id="totalDistance" class="mt-1 text-3xl font-semibold text-gray-900">0 KM</p>
+                        <p class="text-xs text-gray-500 mt-1">Total Fleet Activity</p>
+                    </div>
+                    <div class="data-card bg-white p-6 rounded-xl border-l-4 border-pink-500">
+                        <p class="text-sm font-medium text-gray-500">Avg Cost per KM</p>
+                        <p id="costPerKm" class="mt-1 text-3xl font-semibold text-gray-900">ZMW 0.00 / KM</p>
+                        <p class="text-xs text-yellow-500 mt-1">Target: ZMW 1.35</p>
+                    </div>
+                </div>
+
+                <!-- 2. Charts and Detailed Analysis -->
+                <div class="grid grid-cols-1 lg:grid-cols-3 gap-6">
+                    
+                    <!-- Cost Center Allocation Table (2/3 width) -->
+                    <div class="lg:col-span-2 data-card bg-white p-6 rounded-xl">
+                        <h3 class="text-xl font-semibold text-gray-800 mb-4">Cost Center Allocation</h3>
+                        <div class="table-container">
+                            <table class="min-w-full divide-y divide-gray-200">
+                                <thead class="bg-gray-50 sticky top-0">
+                                    <tr>
+                                        <th scope="col" class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Cost Center</th>
+                                        <th scope="col" class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Total Cost</th>
+                                        <th scope="col" class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Distance Covered</th>
+                                        <th scope="col" class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Percentage (\%)</th>
+                                    </tr>
+                                </thead>
+                                <tbody id="costCenterBody" class="divide-y divide-gray-200">
+                                    <!-- Data rows populated by JavaScript -->
+                                </tbody>
+                            </table>
+                        </div>
+                    </div>
+
+                    <!-- Monthly Fuel Consumption Chart (1/3 width) -->
+                    <div class="lg:col-span-1 data-card bg-white p-6 rounded-xl flex flex-col">
+                        <h3 class="text-xl font-semibold text-gray-800 mb-4">Monthly Fuel Consumption (Liters)</h3>
+                        <div class="flex-grow flex items-end justify-around h-64 border-l border-b border-gray-300 p-1" id="fuelChart">
+                            <p class="text-center text-gray-400">Loading chart...</p>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- 3. Financial Reconciliation & Audit Section -->
+                <div class="bg-white p-6 rounded-xl data-card mt-8">
+                    <h3 class="text-xl font-semibold text-indigo-700 mb-4 border-b pb-2">3. Financial Reconciliation \& Audit Report</h3>
+                    <p class="text-gray-600 mb-4">
+                        Generate a professional audit summary for financial reconciliation, variance analysis, and identification of key spending trends.
+                    </p>
+                    
+                    <div class="flex space-x-4">
+                        <button id="generateAuditButton" class="flex-1 py-3 bg-indigo-600 text-white font-medium rounded-lg hover:bg-indigo-700 transition duration-150 disabled:bg-indigo-300">
+                            <svg class="w-4 h-4 inline-block mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4"></path></svg>
+                            Generate Audit Report
+                        </button>
+                        <button id="downloadAuditSourceButton" class="hidden py-3 px-6 bg-gray-700 text-white font-medium rounded-lg hover:bg-gray-800 transition duration-150">
+                            <svg class="w-5 h-5 inline-block mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"></path></svg>
+                            Download PDF Source
+                        </button>
+                        <button id="submitAuditReportButton" class="hidden py-3 px-6 bg-green-600 text-white font-medium rounded-lg hover:bg-green-700 transition duration-150">
+                            <svg class="w-5 h-5 inline-block mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2"></path></svg>
+                            Submit Report
+                        </button>
+                    </div>
+                    
+                    <div id="auditStatus" class="mt-4 p-3 rounded-lg bg-gray-50 text-gray-700 hidden"></div>
+                    
+                    <div class="mt-6">
+                        <p class="text-sm font-medium text-gray-600 mb-2">Generated Financial Audit Summary (Editable):</p>
+                        <pre id="auditOutput" contenteditable="true" class="report-output p-4 border border-gray-200 rounded-lg bg-gray-50 min-h-[150px] overflow-auto focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500">
+                            <p class="text-gray-400 italic">Click 'Generate Audit Report' to produce a detailed financial analysis.</p>
+                        </pre>
+                    </div>
+                </div>
+
+                <!-- 4. Enlisted Performance Report (EPR) Generator -->
+                <div class="data-card bg-white p-6 rounded-xl mt-8">
+                    <h3 class="text-xl font-semibold text-red-700 mb-4 border-b pb-2">4. Integrated Performance \& Resource Report Generation</h3>
+                    
+                    <div class="grid grid-cols-1 md:grid-cols-3 gap-4 mb-6">
+                        <input type="text" id="eprRank" value="Staff Sergeant" placeholder="Rank (e.g., Sergeant)" class="p-3 border border-gray-300 rounded-lg focus:ring-red-500 focus:border-red-500">
+                        <input type="text" id="eprName" value="Chola Mwila" placeholder="Member Full Name" class="p-3 border border-gray-300 rounded-lg focus:ring-red-500 focus:border-red-500">
+                        <input type="text" id="eprPeriod" value="1 Jan 2025 - 30 Jun 2025" placeholder="Reporting Period (e.g., Q2 2025)" class="p-3 border border-gray-300 rounded-lg focus:ring-red-500 focus:border-red-500">
+                    </div>
+                    
+                    <div class="grid grid-cols-1 md:grid-cols-2 gap-4 mb-6">
+                        <textarea id="eprAchievements" rows="5" placeholder="List Key Achievements (one per line, e.g., 'Reduced fuel waste by 15% through route optimization.')" class="p-3 border border-gray-300 rounded-lg focus:ring-red-500 focus:border-red-500">
+Led team of 4 to recover 2 disabled vehicles in harsh terrain; minimized downtime to under 8 hours.
+Implemented a new tire rotation schedule that extended fleet tire life by 20%.
+Trained 15 junior drivers on defensive driving techniques, resulting in zero preventable accidents this quarter.
+Managed and reconciled ZMW 75,900 in quarterly fuel expenditures with 100% accuracy.
+</textarea>
+                        <textarea id="eprWeaknesses" rows="5" placeholder="Areas for Improvement (Optional, e.g., 'Needs advanced training in vehicle maintenance software.')" class="p-3 border border-gray-300 rounded-lg focus:ring-red-500 focus:border-red-500">
+Requires cross-training in advanced diagnostics software.
+Needs to improve delegation and trust building within the maintenance crew.
+</textarea>
+                    </div>
+
+                    <div class="flex space-x-4">
+                        <button id="generateEPRButton" class="flex-1 py-3 bg-red-600 text-white font-medium rounded-lg hover:bg-red-700 transition duration-150 disabled:bg-red-300">
+                            Generate Draft Report
+                        </button>
+                        <button id="downloadPDFSourceButton" class="hidden py-3 px-6 bg-gray-700 text-white font-medium rounded-lg hover:bg-gray-800 transition duration-150">
+                            <svg class="w-5 h-5 inline-block mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"></path></svg>
+                            Download PDF Source
+                        </button>
+                        <button id="submitReportButton" class="hidden py-3 px-6 bg-green-600 text-white font-medium rounded-lg hover:bg-green-700 transition duration-150">
+                            <svg class="w-5 h-5 inline-block mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2"></path></svg>
+                            Submit Report
+                        </button>
+                    </div>
+                    
+                    <div id="eprStatus" class="mt-4 p-3 rounded-lg bg-gray-50 text-gray-700 hidden"></div>
+                    
+                    <div class="mt-6">
+                        <p class="text-sm font-medium text-gray-600 mb-2">Generated Integrated Report Draft (Editable):</p>
+                        <pre id="eprOutput" contenteditable="true" class="report-output p-4 border border-gray-200 rounded-lg bg-gray-50 min-h-[250px] overflow-auto focus:border-red-500 focus:ring-1 focus:ring-red-500">
+                            <p class="text-gray-400 italic">Enter details and click 'Generate Draft Report' to create an Integrated Performance and Resource Report. You can edit this text before submitting.</p>
+                        </pre>
+                    </div>
+                </div>
+
+            </div>
+        </main>
+    </div>
+
+
+<footer style="margin-top:2rem;padding:1rem;text-align:center;font-size:0.85rem;background:#f3f4f6;border-top:1px solid #e5e7eb;">
+  <span style="font-weight:600;">Moto50 Prototype Navigation:</span>
+  <a href="landingPage.html" style="margin:0 0.25rem;color:#2563eb;text-decoration:underline;">Home</a>·
+  <a href="login.html" style="margin:0 0.25rem;color:#2563eb;text-decoration:underline;">Login</a>·
+  <a href="admin.html" style="margin:0 0.25rem;color:#2563eb;text-decoration:underline;">Admin</a>·
+  <a href="driver1.html" style="margin:0 0.25rem;color:#2563eb;text-decoration:underline;">Driver</a>·
+  <a href="non-drivers1.html" style="margin:0 0.25rem;color:#2563eb;text-decoration:underline;">Non-Driver</a>·
+  <a href="finance5.html" style="margin:0 0.25rem;color:#2563eb;text-decoration:underline;">Finance</a>·
+  <a href="license4.html" style="margin:0 0.25rem;color:#2563eb;text-decoration:underline;">License Checks</a>·
+  <a href="waiver_request.html" style="margin:0 0.25rem;color:#2563eb;text-decoration:underline;">Waiver Requests</a>·
+  <a href="reports.html" style="margin:0 0.25rem;color:#2563eb;text-decoration:underline;">Reports</a>·
+  <a href="AdmiAudit.html" style="margin:0 0.25rem;color:#2563eb;text-decoration:underline;">Audit & Compliance</a>
+</footer>
+
+</body>
+</html>

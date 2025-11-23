@@ -1,0 +1,252 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Secure Fleet Login</title>
+    <!-- Load Tailwind CSS -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <style>
+        /* Custom styles for appearance */
+        @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;700;800&display=swap');
+        body {
+            font-family: 'Inter', sans-serif;
+            background-color: #f0f4f8; /* Light gray-blue background */
+            /* Add padding at the top to ensure the fixed header doesn't obscure content */
+            padding-top: 5rem; 
+        }
+        /* Style for the fixed header navigation links */
+        #main-header a {
+            padding: 0.25rem 0.5rem;
+            border-radius: 0.375rem; /* rounded-md */
+        }
+    </style>
+    <!-- Load Firebase SDKs -->
+    <script type="module">
+        import { initializeApp } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-app.js";
+        import { getAuth, signInAnonymously, signInWithCustomToken, onAuthStateChanged, setPersistence, browserSessionPersistence } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js";
+        import { getFirestore, doc, setDoc } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
+
+        // Global variables provided by the Canvas environment (will be undefined/empty in VS Code)
+        const appId = typeof __app_id !== 'undefined' ? __app_id : 'default-app-id';
+        const firebaseConfig = JSON.parse(typeof __firebase_config !== 'undefined' ? __firebase_config : '{}');
+        const initialAuthToken = typeof __initial_auth_token !== 'undefined' ? __initial_auth_token : null;
+
+        let app, db, auth;
+        let isAuthReady = false;
+
+        try {
+            if (Object.keys(firebaseConfig).length > 0) {
+                app = initializeApp(firebaseConfig);
+                auth = getAuth(app);
+                db = getFirestore(app);
+
+                // Set session persistence to maintain auth state
+                setPersistence(auth, browserSessionPersistence).then(async () => {
+                    if (initialAuthToken) {
+                        await signInWithCustomToken(auth, initialAuthToken);
+                    } else {
+                        await signInAnonymously(auth);
+                    }
+                });
+
+                onAuthStateChanged(auth, (user) => {
+                    isAuthReady = true;
+                    if (user) {
+                        console.log("Firebase Auth Ready. User ID:", user.uid);
+                        // Store the user's initial login state
+                        const userRef = doc(db, 'artifacts', appId, 'users', user.uid, 'profile', 'data');
+                        setDoc(userRef, { lastLogin: new Date().toISOString() }, { merge: true });
+                    } else {
+                        console.log("Firebase Auth Ready. User is signed out.");
+                    }
+                });
+
+            } else {
+                console.warn("Firebase config missing. Running in mock mode only for VS Code demo.");
+                isAuthReady = true; // Assume ready for mock login immediately
+            }
+        } catch (error) {
+            console.warn("Firebase initialization failed:", error);
+            isAuthReady = true; // Ensure mock login can still run
+        }
+
+        // --- MOCK LOGIN AND ROLE ASSIGNMENT LOGIC ---
+
+        const MOCK_USERS = {
+            'admin@wvz.org': { role: 'admin', password: 'password123' },
+            'driver@wvz.org': { role: 'driver', password: 'password123' },
+            'staff@wvz.org': { role: 'non-driver', password: 'password123' },
+            'finance@wvz.org': { role: 'finance', password: 'password123' },
+        };
+        const MFA_CODE = '123456'; 
+
+        window.loginState = {
+            email: null,
+            role: null,
+            step: 'credentials' 
+        };
+
+        window.showError = (message, isSuccess = false) => {
+            const errorElement = document.getElementById('errorMessage');
+            errorElement.textContent = message;
+            errorElement.classList.remove('hidden', 'bg-red-500', 'bg-green-500');
+            errorElement.classList.add(isSuccess ? 'bg-green-500' : 'bg-red-500');
+            
+            setTimeout(() => {
+                errorElement.classList.add('hidden');
+            }, 5000);
+        };
+
+        window.handleLogin = async (event) => {
+            event.preventDefault();
+
+            if (!isAuthReady) {
+                window.showError("Authentication service is not yet ready. Please wait a moment.");
+                return;
+            }
+
+            const emailInput = document.getElementById('email').value.trim();
+            const passwordInput = document.getElementById('password').value.trim();
+            const user = MOCK_USERS[emailInput];
+            
+            // 1. CREDENTIALS CHECK
+            if (user && user.password === passwordInput) {
+                window.loginState.email = emailInput;
+                window.loginState.role = user.role;
+                
+                // Transition to MFA step
+                window.loginState.step = 'mfa';
+                document.getElementById('credential-form').classList.add('hidden');
+                document.getElementById('mfa-form').classList.remove('hidden');
+                document.getElementById('mfaCode').focus();
+                // Removed the hint from the success message
+                window.showError(`Login successful. Please enter the simulated MFA code.`, true); 
+            } else {
+                window.showError("Invalid email or password.");
+            }
+        };
+
+        
+        window.handleMfa = (event) => {
+            event.preventDefault();
+            const mfaCodeInput = document.getElementById('mfaCode').value.trim();
+
+            if (mfaCodeInput === MFA_CODE) {
+                const role = window.loginState.role || 'default';
+                let redirectUrl = 'landingPage.html';
+
+                switch (role) {
+                    case 'admin':
+                        redirectUrl = 'admin.html';
+                        break;
+                    case 'driver':
+                        redirectUrl = 'driver1.html';
+                        break;
+                    case 'non-driver':
+                        redirectUrl = 'non-drivers1.html';
+                        break;
+                    case 'finance':
+                        redirectUrl = 'finance5.html'; 
+                        break;
+                    default:
+                        redirectUrl = 'landingPage.html';
+                        break;
+                }
+
+                // In a VS Code demo environment, we perform the redirection here
+                window.location.href = redirectUrl;
+                
+            } else {
+                window.showError("Invalid MFA code. Please try again.");
+            }
+        };
+
+
+        // Assign functions to the window for access from the HTML
+        window.handleLogin = window.handleLogin;
+        window.handleMfa = window.handleMfa;
+        window.showError = window.showError;
+    </script>
+</head>
+<body class="flex items-center justify-center min-h-screen p-4">
+
+    <!-- Fixed Main Application Header -->
+    <header id="main-header" class="fixed top-0 left-0 w-full bg-blue-700 text-white shadow-xl z-50 p-3">
+        <div class="max-w-7xl mx-auto flex items-center justify-between">
+            
+            <!-- System Name/Logo (MOTA50) -->
+            <div class="text-xl font-extrabold tracking-wider text-orange-300">
+                MOTA50
+            </div>
+
+            <!-- Navigation Links -->
+            <div class="flex flex-wrap justify-end gap-x-3 gap-y-1 text-sm font-medium">
+                <a href="landingPage.html" class="text-blue-200 hover:text-white transition-colors duration-150">Home</a>
+                <a href="login_mfa_mock.html" class="text-white font-semibold bg-blue-600 rounded-md px-2 py-1">Login</a>
+                <span class="text-blue-500 hidden sm:inline">|</span>
+                <a href="admin.html" class="text-blue-200 hover:text-white transition-colors duration-150">Admin</a>
+                <a href="driver1.html" class="text-blue-200 hover:text-white transition-colors duration-150">Driver</a>
+                <a href="non-drivers1.html" class="text-blue-200 hover:text-white transition-colors duration-150">Staff</a>
+                <a href="finance5.html" class="text-blue-200 hover:text-white transition-colors duration-150">Finance</a>
+                <span class="text-blue-500 hidden md:inline">|</span>
+                <a href="license4.html" class="text-blue-200 hover:text-white transition-colors duration-150 hidden lg:inline">License Checks</a>
+                <a href="waiver_request.html" class="text-blue-200 hover:text-white transition-colors duration-150 hidden lg:inline">Waiver</a>
+                <a href="reports.html" class="text-blue-200 hover:text-white transition-colors duration-150 hidden sm:inline">Reports</a>
+                <a href="AdmiAudit.html" class="text-blue-200 hover:text-white transition-colors duration-150 hidden sm:inline">Audit</a>
+            </div>
+        </div>
+    </header>
+
+
+    <!-- Login Card Container -->
+    <div id="login-card" class="w-full max-w-md p-8 bg-white rounded-xl shadow-2xl transition-all duration-300">
+        <div class="text-center mb-6">
+            <!-- World Vision Zambia Logo -->
+            <img src="https://placehold.co/100x30/1f4788/ffffff?text=WVZ" alt="World Vision Zambia Logo" class="mx-auto mb-4 rounded-md">
+            <h1 class="text-3xl font-bold text-gray-800">Secure Login</h1>
+            <p class="text-gray-500">Integrated Fleet Management Access</p>
+        </div>
+
+        <!-- Error Message Display -->
+        <div id="errorMessage" class="hidden p-3 mb-4 text-sm font-medium text-white rounded-lg transition-opacity duration-300" role="alert">
+            <!-- Error messages will appear here -->
+        </div>
+
+        <!-- 1. Credentials Form (Default View) -->
+        <form id="credential-form" onsubmit="handleLogin(event)" class="space-y-4">
+            <div>
+                <label for="email" class="block text-sm font-medium text-gray-700 mb-1">Email / Username</label>
+                <input type="email" id="email" name="email" required placeholder="Enter your email"
+                       class="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-blue-500 focus:border-blue-500 transition duration-150">
+            </div>
+            <div>
+                <label for="password" class="block text-sm font-medium text-gray-700 mb-1">Password</label>
+                <input type="password" id="password" name="password" required placeholder="Enter your password"
+                       class="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-blue-500 focus:border-blue-500 transition duration-150">
+            </div>
+            <button type="submit"
+                    class="w-full py-2 px-4 bg-blue-600 text-white font-semibold rounded-lg shadow-md hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-2 transition duration-150 transform hover:scale-[1.01]">
+                Log In
+            </button>
+            <!-- Removed the simulated roles instructions here -->
+        </form>
+
+        <!-- 2. MFA Form (Hidden by Default) -->
+        <form id="mfa-form" onsubmit="handleMfa(event)" class="space-y-4 hidden">
+            <h3 class="text-xl font-semibold text-gray-800 text-center mb-4">Multi-Factor Authentication</h3>
+            <p class="text-sm text-gray-600 text-center">A code has been "sent" to your registered device. Please enter it below.</p>
+            <div>
+                <label for="mfaCode" class="block text-sm font-medium text-gray-700 mb-1">6-Digit Code</label>
+                <input type="text" id="mfaCode" name="mfaCode" required maxlength="6"
+                       class="w-full px-4 py-2 text-center text-lg border-2 border-dashed border-gray-400 rounded-lg focus:ring-green-500 focus:border-green-500 transition duration-150 tracking-widest">
+            </div>
+            <button type="submit"
+                    class="w-full py-2 px-4 bg-green-600 text-white font-semibold rounded-lg shadow-md hover:bg-green-700 focus:outline-none focus:ring-2 focus:ring-green-500 focus:ring-offset-2 transition duration-150 transform hover:scale-[1.01]">
+                Verify & Access
+            </button>
+        </form>
+    </div>
+
+</body>
+</html>

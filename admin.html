@@ -1,0 +1,325 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <!-- dummy commit -->
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Admin_dashboard</title>
+    <!-- Load Tailwind CSS -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <style>
+        /* Custom styles for aesthetic enhancements */
+        .card {
+            box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1), 0 2px 4px -2px rgba(0, 0, 0, 0.06);
+            border-radius: 0.75rem; /* rounded-xl */
+            transition: transform 0.3s ease;
+        }
+        .card:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 10px 15px -3px rgba(0, 0, 0, 0.1), 0 4px 6px -4px rgba(0, 0, 0, 0.1);
+        }
+        .compliance-bar {
+            height: 10px;
+            border-radius: 9999px; /* rounded-full */
+            background-color: #e5e7eb; /* gray-200 */
+        }
+    </style>
+    <script>
+        // Placeholder data for the wireframe simulation
+        const dashboardData = {
+            activeBookings: 12,
+            pendingApprovals: 3,
+            utilizationRate: 85, // Current Vehicle Utilization
+            totalViolations: 45,
+            expiredLicenses: 1,
+            avgCostPerKM: 0.52, // ZMW
+            highRiskDrivers: 2,
+            fleetStatus: [
+                { id: '1A-001', model: 'Toyota Hilux', driver: 'Joe Mwale', status: 'On Trip', health: 95, color: 'bg-green-500', location: 'Lusaka Field Office' },
+                { id: '1B-005', model: 'Nissan Patrol', driver: 'Jane Banda', status: 'Maint. Due', health: 70, color: 'bg-yellow-500', location: 'Garage Queue' },
+                { id: '1C-010', model: 'Mazda Bakkie', driver: 'N/A', status: 'Available', health: 100, color: 'bg-blue-500', location: 'HQ Parking Lot' },
+                { id: '1D-003', model: 'Isuzu D-Max', driver: 'Tom Phiri', status: 'Violation', health: 90, color: 'bg-red-500', location: 'Kitwe Trip' },
+            ],
+            complianceMetrics: {
+                inspectionsDue: 5,
+                roadTaxExpired: 0,
+                insuranceExpired: 1,
+                licensesToVerify: 2
+            }
+        };
+
+        // Function to render the dashboard based on placeholder data
+        function renderDashboard() {
+            const utilization = dashboardData.utilizationRate;
+            document.getElementById('utilization-value').textContent = ${utilization}%;
+            document.getElementById('utilization-fill').style.width = ${utilization}%;
+
+            document.getElementById('bookings-count').textContent = dashboardData.activeBookings;
+            document.getElementById('approvals-count').textContent = dashboardData.pendingApprovals;
+            document.getElementById('violations-count').textContent = dashboardData.totalViolations;
+            document.getElementById('cost-per-km').textContent = ZMW ${dashboardData.avgCostPerKM.toFixed(2)};
+
+
+// Render Fleet Status Table (Innovation: Health Score + Status)
+            const fleetTableBody = document.getElementById('fleet-status-body');
+            fleetTableBody.innerHTML = '';
+            dashboardData.fleetStatus.forEach(vehicle => {
+                const row = document.createElement('tr');
+                row.className = 'border-b hover:bg-gray-50';
+                row.innerHTML = `
+                    <td class="px-4 py-3 text-sm font-medium text-gray-900">${vehicle.id}</td>
+                    <td class="px-4 py-3 text-sm text-gray-600">${vehicle.model}</td>
+                    <td class="px-4 py-3 text-sm font-semibold">
+                        <span class="p-1 rounded-full text-xs text-white ${vehicle.color}">${vehicle.status}</span>
+                    </td>
+                    <td class="px-4 py-3 text-sm text-gray-600">${vehicle.driver}</td>
+                    <td class="px-4 py-3">
+                        <div class="compliance-bar">
+                            <div class="h-full rounded-full ${vehicle.health > 80 ? 'bg-green-400' : vehicle.health > 50 ? 'bg-yellow-400' : 'bg-red-400'}" style="width: ${vehicle.health}%;"></div>
+                        </div>
+                        <span class="text-xs text-gray-500">${vehicle.health}%</span>
+                    </td>
+                    <td class="px-4 py-3 text-sm text-gray-600">${vehicle.location}</td>
+                    <td class="px-4 py-3"><button class="text-indigo-600 hover:text-indigo-900 text-sm font-medium">View Log</button></td>
+                `;
+                fleetTableBody.appendChild(row);
+            });
+
+            // Render Compliance Metrics (Alignment with WVZ Mission)
+            document.getElementById('comp-insp').textContent = dashboardData.complianceMetrics.inspectionsDue;
+            document.getElementById('comp-license').textContent = dashboardData.complianceMetrics.licensesToVerify;
+            document.getElementById('comp-insurance').textContent = dashboardData.complianceMetrics.insuranceExpired;
+        }
+
+        // Initialize dashboard and Firebase setup on load
+        window.onload = function() {
+            renderDashboard();
+            
+            // --- FIREBASE INITIALIZATION & AUTH (Crucial for Technical Soundness) ---
+            console.log("Initializing Firebase for VisionLog...");
+            try {
+                // The global variables __app_id, __firebase_config, and __initial_auth_token
+                // are assumed to be available in the Canvas environment.
+                const firebaseConfig = JSON.parse(typeof __firebase_config !== 'undefined' ? __firebase_config : '{}');
+                const appId = typeof __app_id !== 'undefined' ? __app_id : 'default-app-id';
+
+
+if (Object.keys(firebaseConfig).length === 0) {
+                    console.error("Firebase config is empty. Data persistence will be simulated.");
+                    document.getElementById('auth-status').textContent = 'Simulated Data Mode';
+                } else {
+                    // Lazy-load Firebase modules for better performance
+                    import("https://www.gstatic.com/firebasejs/11.6.1/firebase-app.js")
+                        .then(module => {
+                            const { initializeApp } = module;
+                            const app = initializeApp(firebaseConfig);
+                            
+                            return import("https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js");
+                        })
+                        .then(module => {
+                            const { getAuth, signInWithCustomToken, signInAnonymously } = module;
+                            const auth = getAuth();
+                            
+                            const token = typeof __initial_auth_token !== 'undefined' ? __initial_auth_token : null;
+                            
+                            if (token) {
+                                return signInWithCustomToken(auth, token);
+                            } else {
+                                return signInAnonymously(auth);
+                            }
+                        })
+                        .then(userCredential => {
+                            const userId = userCredential.user.uid;
+                            document.getElementById('auth-status').textContent = `Authenticated (User ID: ${userId})`;
+                            console.log("Firebase Authentication Successful.", userId);
+                            
+                            // Optional: Start Firestore listeners here if required
+                            // Note: For this wireframe, we focus on the UI and technical readiness.
+                        })
+                        .catch(error => {
+                            console.error("Firebase Authentication Failed:", error);
+                            document.getElementById('auth-status').textContent = 'Authentication Failed';
+                        });
+                }
+            } catch (e) {
+                console.error("Error setting up Firebase:", e);
+                document.getElementById('auth-status').textContent = 'Setup Error';
+            }
+        };
+
+        // Function to simulate a modal/message box (replacing alert())
+        function showMessage(title, message) {
+            const modal = document.getElementById('message-modal');
+            document.getElementById('modal-title').textContent = title;
+            document.getElementById('modal-message').textContent = message;
+            modal.classList.remove('hidden');
+        }
+
+        function closeModal() {
+            document.getElementById('message-modal').classList.add('hidden');
+        }
+    </script>
+</head>
+<body class="bg-gray-50 min-h-screen font-sans antialiased text-gray-700">
+
+    <!-- Message Modal (Replaces alert()) -->
+    <div id="message-modal" class="hidden fixed inset-0 bg-gray-600 bg-opacity-75 z-50 flex items-center justify-center">
+        <div class="bg-white rounded-lg p-6 w-11/12 max-w-sm card">
+            <h3 id="modal-title" class="text-xl font-semibold mb-3 text-red-600"></h3>
+            <p id="modal-message" class="mb-4 text-gray-700"></p>
+            <button onclick="closeModal()" class="w-full bg-indigo-600 text-white py-2 rounded-lg hover:bg-indigo-700 transition">OK</button>
+        </div>
+    </div>
+
+
+<!-- Header & Navigation -->
+    <header class="bg-white shadow-md sticky top-0 z-10">
+        <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-4 flex justify-between items-center">
+            <h1 class="text-2xl font-bold text-indigo-700">MOTA50</h1>
+            <div class="flex items-center space-x-4">
+                <span id="auth-status" class="text-sm text-gray-500">Connecting...</span>
+                <span class="text-sm font-medium text-gray-900">Admin User | WVZ HQ</span>
+                <button class="text-indigo-600 hover:text-indigo-800 text-lg" onclick="showMessage('Profile Clicked', 'Future feature: User Profile & Logout.')">
+                    <svg xmlns="http://www.w3.org/2000/svg" class="h-6 w-6" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5.121 17.804A13.937 13.937 0 0112 16c2.5 0 4.847.655 6.879 1.804M15 10a3 3 0 11-6 0 3 3 0 016 0zm6 2a9 9 0 11-18 0 9 9 0 0118 0z" /></svg>
+                </button>
+            </div>
+        </div>
+    </header>
+
+    <main class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
+
+        <!-- Grid of Key Metrics (Focus on Efficiency & Financial Insight) -->
+        <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6 mb-8">
+
+            <!-- Metric Card 1: Pending Approvals (Actionable Efficiency) -->
+            <div class="card bg-white p-5 flex items-center justify-between">
+                <div>
+                    <p class="text-sm font-medium text-gray-500">Pending Approvals</p>
+                    <p id="approvals-count" class="text-3xl font-extrabold text-indigo-700">3</p>
+                </div>
+                <button class="p-3 bg-indigo-100 text-indigo-600 rounded-full hover:bg-indigo-200 transition" onclick="showMessage('Bookings Manager', 'View and approve/reject pending vehicle requests.')">
+                    <svg xmlns="http://www.w3.org/2000/svg" class="h-6 w-6" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2m-3 7h3m-3 4h3m-6-4h.01M18 14h.01" /></svg>
+                </button>
+            </div>
+
+            <!-- Metric Card 2: Current Utilization Rate (Executive Insight) -->
+            <div class="card bg-white p-5">
+                <p class="text-sm font-medium text-gray-500">Utilization Rate (Live)</p>
+                <div class="flex items-center mt-2">
+                    <p id="utilization-value" class="text-3xl font-extrabold text-green-600 mr-4">85%</p>
+                    <div class="flex-grow">
+                        <div class="compliance-bar">
+                            <div id="utilization-fill" class="h-full rounded-full bg-green-500" style="width: 85%;"></div>
+                        </div>
+                    </div>
+                </div>
+                <p class="text-xs text-gray-400 mt-1">Goal: 90% utilization to maximize asset value.</p>
+            </div>
+
+            <!-- Metric Card 3: Avg Cost per KM (Financial Accountability) -->
+            <div class="card bg-white p-5">
+                <p class="text-sm font-medium text-gray-500">Avg Cost per KM (Fuel/Maint)</p>
+                <p id="cost-per-km" class="text-3xl font-extrabold text-red-600">ZMW 0.52</p>
+                <p class="text-xs text-gray-400 mt-1">Click to view Cost Center Breakdown.</p>
+                <button class="mt-2 text-sm text-indigo-600 hover:text-indigo-800" onclick="showMessage('Financial Breakdown', 'Future feature: Detailed cost allocation reports by project code.')">View Financial Portal</button>
+            </div>
+
+
+<!-- Metric Card 4: Total Driver Violations (Safety & Compliance) -->
+            <div class="card bg-white p-5">
+                <p class="text-sm font-medium text-gray-500">Total Driver Violations (30 Days)</p>
+                <p id="violations-count" class="text-3xl font-extrabold text-yellow-600">45</p>
+                <p class="text-xs text-gray-400 mt-1">4 High-Risk Drivers identified.</p>
+                <button class="mt-2 text-sm text-indigo-600 hover:text-indigo-800" onclick="showMessage('Violation Log', 'Future feature: Driver violation points history and disciplinary action tracker.')">Review Violations</button>
+            </div>
+        </div>
+
+        <!-- Two-Column Layout for Detail Views (Innovation: Real-time Control) -->
+        <div class="grid grid-cols-1 lg:grid-cols-3 gap-6">
+
+            <!-- Left Column: Real-time Fleet Status Table -->
+            <div class="lg:col-span-2 card bg-white p-6">
+                <h2 class="text-xl font-semibold mb-4 text-gray-800">Live Fleet Status & Vehicle Health Score</h2>
+                <div class="overflow-x-auto">
+                    <table class="min-w-full divide-y divide-gray-200">
+                        <thead>
+                            <tr>
+                                <th class="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Asset ID</th>
+                                <th class="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Model</th>
+                                <th class="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Status</th>
+                                <th class="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Driver</th>
+                                <th class="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Health Score</th>
+                                <th class="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Last Location</th>
+                                <th class="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Action</th>
+                            </tr>
+                        </thead>
+                        <tbody id="fleet-status-body" class="bg-white divide-y divide-gray-200">
+                            <!-- Rows inserted by JavaScript (renderDashboard) -->
+                        </tbody>
+                    </table>
+                </div>
+                <p class="mt-4 text-xs text-gray-500">*Health Score is calculated from inspection compliance, maintenance history, and telematics data.</p>
+            </div>
+
+            <!-- Right Column: Critical Compliance & Maintenance Alerts -->
+            <div class="lg:col-span-1 space-y-6">
+
+
+<!-- Critical Compliance Alerts (Mandatory Requirement) -->
+                <div class="card bg-white p-6 border-l-4 border-red-500">
+                    <h2 class="text-xl font-semibold mb-4 text-red-600 flex items-center">
+                        <svg xmlns="http://www.w3.org/2000/svg" class="h-6 w-6 mr-2" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" /></svg>
+                        Compliance Risk
+                    </h2>
+                    <ul class="space-y-3">
+                        <li class="flex justify-between items-center text-sm">
+                            <span class="text-gray-600">Expired Driver Licenses</span>
+                            <span id="comp-license" class="font-bold text-red-600">2</span>
+                        </li>
+                        <li class="flex justify-between items-center text-sm">
+                            <span class="text-gray-600">Overdue Pre-Trip Inspections</span>
+                            <span id="comp-insp" class="font-bold text-red-600">5</span>
+                        </li>
+                        <li class="flex justify-between items-center text-sm">
+                            <span class="text-gray-600">Expired Insurance / Road Tax</span>
+                            <span id="comp-insurance" class="font-bold text-red-600">1</span>
+                        </li>
+                    </ul>
+                    <button class="w-full mt-4 bg-red-500 text-white py-2 rounded-lg hover:bg-red-600 transition text-sm font-medium" onclick="showMessage('Compliance Action', 'This triggers an automated notification to drivers/staff to update documents.')">
+                        Notify Responsible Staff
+                    </button>
+                </div>
+
+                <!-- Predictive Maintenance Block (Innovation Point) -->
+                <div class="card bg-white p-6 border-l-4 border-yellow-500">
+                    <h2 class="text-xl font-semibold mb-4 text-yellow-700 flex items-center">
+                        <svg xmlns="http://www.w3.org/2000/svg" class="h-6 w-6 mr-2" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.228.608 3.224 0z" /><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" /></svg>
+                        Predictive Maintenance
+                    </h2>
+                    <p class="text-sm text-gray-600 mb-3">Vehicle 1B-005 (Nissan Patrol) is predicted to require a brake pad change within the next 500 KM based on last inspection data and mileage trends.</p>
+                    <button class="w-full bg-yellow-500 text-white py-2 rounded-lg hover:bg-yellow-600 transition text-sm font-medium" onclick="showMessage('Maintenance Scheduling', 'Future feature: Auto-create work order and assign to approved garage.')">
+                        Schedule Service
+                    </button>
+                </div>
+
+            </div>
+        </div>
+
+    </main>
+
+<footer style="margin-top:2rem;padding:1rem;text-align:center;font-size:0.85rem;background:#f3f4f6;border-top:1px solid #e5e7eb;">
+  <span style="font-weight:600;">Moto50 Prototype Navigation:</span>
+  <a href="landingPage.html" style="margin:0 0.25rem;color:#2563eb;text-decoration:underline;">Home</a>·
+  <a href="login.html" style="margin:0 0.25rem;color:#2563eb;text-decoration:underline;">Login</a>·
+  <a href="admin.html" style="margin:0 0.25rem;color:#2563eb;text-decoration:underline;">Admin</a>·
+  <a href="driver1.html" style="margin:0 0.25rem;color:#2563eb;text-decoration:underline;">Driver</a>·
+  <a href="non-drivers1.html" style="margin:0 0.25rem;color:#2563eb;text-decoration:underline;">Non-Driver</a>·
+  <a href="finance5.html" style="margin:0 0.25rem;color:#2563eb;text-decoration:underline;">Finance</a>·
+  <a href="license4.html" style="margin:0 0.25rem;color:#2563eb;text-decoration:underline;">License Checks</a>·
+  <a href="waiver_request.html" style="margin:0 0.25rem;color:#2563eb;text-decoration:underline;">Waiver Requests</a>·
+  <a href="reports.html" style="margin:0 0.25rem;color:#2563eb;text-decoration:underline;">Reports</a>·
+  <a href="AdmiAudit.html" style="margin:0 0.25rem;color:#2563eb;text-decoration:underline;">Audit & Compliance</a>
+</footer>
+
+</body>
+</html>

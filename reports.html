@@ -1,0 +1,412 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Reports Dashboard</title>
+    <!-- Load Tailwind CSS -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <style>
+        body {
+            font-family: 'Inter', sans-serif;
+            background-color: #f3f4f6;
+        }
+        .data-card {
+            box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1), 0 2px 4px -2px rgba(0, 0, 0, 0.06);
+            transition: transform 0.2s;
+        }
+        .data-card:hover {
+            transform: translateY(-2px);
+        }
+        /* Style for the sidebar navigation on mobile to allow horizontal scrolling */
+        #nav-sidebar {
+            /* flex-row for mobile, flex-col for large screens */
+            display: flex;
+            flex-direction: row;
+            overflow-x: auto;
+            padding-bottom: 8px; /* For scrollbar visibility */
+            -webkit-overflow-scrolling: touch;
+        }
+        @media (min-width: 1024px) {
+            #nav-sidebar {
+                flex-direction: column;
+                overflow-x: hidden;
+            }
+        }
+        /* Hide scrollbar for aesthetics, but keep scroll functionality */
+        #nav-sidebar::-webkit-scrollbar {
+            display: none;
+        }
+        #nav-sidebar {
+            -ms-overflow-style: none;  /* IE and Edge */
+            scrollbar-width: none;  /* Firefox */
+        }
+    </style>
+</head>
+<body>
+
+    <div class="min-h-screen">
+        <!-- Toast/Message Box for Exports -->
+        <div id="message-box" class="fixed top-5 right-5 z-50 p-4 bg-gray-800 text-white rounded-lg shadow-2xl opacity-0 transition-opacity duration-500 ease-out pointer-events-none">
+            [Message Placeholder]
+        </div>
+
+        <!-- Header Bar -->
+        <header class="bg-white shadow-md p-4 sticky top-0 z-10">
+            <h1 class="text-2xl font-bold text-gray-900">Reports Dashboard</h1>
+            <p class="text-sm text-gray-500">Real-time operational, compliance, financial, and driver performance insights.</p>
+        </header>
+
+        <div class="flex flex-col lg:flex-row max-w-7xl mx-auto p-4 sm:p-6 lg:p-8">
+            <!-- Sidebar / Navigation -->
+            <nav class="lg:w-64 lg:mr-8 mb-6 lg:mb-0 bg-white p-4 rounded-xl shadow-lg flex-shrink-0">
+                <h3 class="text-lg font-semibold text-gray-700 mb-4 border-b pb-2 hidden lg:block">Report Categories</h3>
+                <div id="nav-sidebar" class="space-x-2 lg:space-x-0 lg:space-y-2">
+                    <!-- Navigation buttons rendered by JS -->
+                </div>
+            </nav>
+
+            <!-- Main Content Area -->
+            <main id="dashboard-content" class="flex-1">
+                <div class="p-6 bg-white rounded-xl shadow-lg min-h-[600px]">
+                    <!-- Dynamic content rendered by JS -->
+                    <p class="text-center text-gray-400 py-20">Loading reports...</p>
+                </div>
+            </main>
+        </div>
+
+        <!-- Footer -->
+        <footer class="max-w-7xl mx-auto p-4 text-center text-sm text-gray-500">
+            <p>Dashboard powered by FleetTrack | Data accurate as of today.</p>
+            <p class="mt-2 text-xs">
+                *Export Options: CSV, Excel, PDF; automated periodic email distribution to stakeholders are simulated functions in this demo.
+            </p>
+        </footer>
+    </div>
+
+    <script>
+        // --- MOCK DATA ---
+        const MOCK_DATA = {
+            operational: [
+                { id: 1, vehicle: 'V-001', utilization: '92%', trips: 35, duration: '2.1h', mileage: 1250, cost: 450 },
+                { id: 2, vehicle: 'V-002', utilization: '78%', trips: 22, duration: '1.5h', mileage: 980, cost: 310 },
+                { id: 3, vehicle: 'V-003', utilization: '88%', trips: 31, duration: '1.9h', mileage: 1120, cost: 400 },
+                { id: 4, vehicle: 'V-004', utilization: '65%', trips: 18, duration: '1.0h', mileage: 750, cost: 250 },
+            ],
+            compliance: [
+                { id: 1, driver: 'John Doe', item: 'License', status: 'Expired', date: '2025-01-15', severity: 'High' },
+                { id: 2, driver: 'Jane Smith', item: 'Inspection', status: 'Overdue', date: '2025-02-28', severity: 'Medium' },
+                { id: 3, driver: 'Mike Lee', item: 'Waiver', status: 'Pending', date: '2025-03-10', severity: 'Low' },
+                { id: 4, driver: 'Chris Paul', item: 'Violation', status: 'Open', date: '2025-03-20', severity: 'High' },
+            ],
+            financial: [
+                { id: 1, costCenter: 'Sales', fuel: 2500, maintenance: 1500, trips: 800, total: 4800 },
+                { id: 2, costCenter: 'Logistics', fuel: 4100, maintenance: 2200, trips: 1500, total: 7800 },
+                { id: 3, costCenter: 'Service', fuel: 1800, maintenance: 1100, trips: 550, total: 3450 },
+            ],
+            driver: [
+                { id: 1, driver: 'John Doe', safetyScore: 92, harshBraking: 2, speedingAlerts: 1, violations: 0 },
+                { id: 2, driver: 'Jane Smith', safetyScore: 78, harshBraking: 8, speedingAlerts: 5, violations: 1 },
+                { id: 3, driver: 'Mike Lee', safetyScore: 85, harshBraking: 4, speedingAlerts: 2, violations: 0 },
+            ]
+        };
+
+        // --- REPORT DEFINITIONS AND CONFIGURATION ---
+        const REPORTS = [
+            {
+                id: 'operational',
+                name: 'Operational Reports',
+                subtitle: 'Vehicle utilization, trip durations, and mileage logs.',
+                icon: '<svg class="w-5 h-5 mr-3" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M17 9V7a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2m2 4h10a2 2 0 002-2v-6a2 2 0 00-2-2H9a2 2 0 00-2 2v6a2 2 0 002 2zm7-5a2 2 0 11-4 0 2 2 0 014 0z" /></svg>',
+                kpis: [
+                    { title: 'Total Utilization', value: '81%', trend: '2.5% ↑', bgColor: 'bg-blue-500' },
+                    { title: 'Avg. Trip Duration', value: '1.6 Hours', trend: '0.1h ↓', bgColor: 'bg-orange-500' },
+                    { title: 'Monthly Mileage', value: '45,120 mi', trend: '5.2% ↑', bgColor: 'bg-green-500' },
+                    { title: 'Total Cost Allocation', value: '$18,500', trend: '1.8% ↑', bgColor: 'bg-red-500' },
+                ],
+                columns: [
+                    { header: 'Vehicle ID', key: 'vehicle' },
+                    { header: 'Utilization', key: 'utilization', class: 'font-bold text-blue-600' },
+                    { header: 'Trips', key: 'trips' },
+                    { header: 'Avg. Duration', key: 'duration' },
+                    { header: 'Mileage (mi)', key: 'mileage', format: (val) => val.toLocaleString() },
+                    { header: 'Cost ($)', key: 'cost', format: (val) => `$${val.toLocaleString()}` },
+                ]
+            },
+            {
+                id: 'compliance',
+                name: 'Compliance Reports',
+                subtitle: 'Tracking expired licenses, overdue inspections, and violation points.',
+                icon: '<svg class="w-5 h-5 mr-3" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12l2 2 4-4m5.618-4.016A11.955 11.955 0 0112 2.944a11.955 11.955 0 01-8.618 3.04A12.02 12.02 0 003 9c0 5.591 3.824 10.29 9 11.622 5.176-1.332 9-6.03 9-11.622 0-1.042-.192-2.058-.562-3.006z" /></svg>',
+                kpis: [
+                    { title: 'Expired Licenses', value: '3', trend: '1 ↑', bgColor: 'bg-red-600' },
+                    { title: 'Overdue Inspections', value: '7', trend: '2 ↑', bgColor: 'bg-yellow-600' },
+                    { title: 'Pending Waivers', value: '1', trend: '1 ↓', bgColor: 'bg-indigo-600' },
+                    { title: 'Total Violation Points', value: '42', trend: '5 ↑', bgColor: 'bg-gray-600' },
+                ],
+                columns: [
+                    { header: 'Driver', key: 'driver' },
+                    { header: 'Item', key: 'item' },
+                    { header: 'Status', key: 'status', format: (val) => `<span class="font-medium ${val === 'Expired' ? 'text-red-600' : val === 'Overdue' ? 'text-yellow-600' : 'text-green-600'}">${val}</span>` },
+                    { header: 'Date', key: 'date' },
+                    { header: 'Severity', key: 'severity' },
+                ]
+            },
+            {
+                id: 'financial',
+                name: 'Financial Reports',
+                subtitle: 'Fuel consumption trends, cost center breakdowns, and trip expenses.',
+                icon: '<svg class="w-5 h-5 mr-3" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 8c-1.657 0-3 .895-3 2s1.343 2 3 2 3 .895 3 2-1.343 2-3 2m0-8c1.11 0 2.08.402 2.599 1M12 8V5m0 10v3m-7.788-9h15.576c.725 0 1.223.708.91 1.353l-2.427 4.908C15.023 15.688 13.568 17 12 17s-3.023-1.312-3.771-2.439L4.878 10.353C4.565 9.708 5.063 9 5.788 9z" /></svg>',
+                kpis: [
+                    { title: 'Total Expense', value: '$16,050', trend: '4.1% ↑', bgColor: 'bg-purple-600' },
+                    { title: 'Avg. CPM (Cost Per Mile)', value: '$0.35', trend: '0.02 ↑', bgColor: 'bg-pink-600' },
+                    { title: 'Trip Expense/Total', value: '25%', trend: '1.2% ↓', bgColor: 'bg-teal-600' },
+                    { title: 'Highest Cost Center', value: 'Logistics', trend: '', bgColor: 'bg-yellow-600' },
+                ],
+                columns: [
+                    { header: 'Cost Center', key: 'costCenter', class: 'font-semibold text-gray-800' },
+                    { header: 'Fuel ($)', key: 'fuel', format: (val) => `$${val.toLocaleString()}` },
+                    { header: 'Maintenance ($)', key: 'maintenance', format: (val) => `$${val.toLocaleString()}` },
+                    { header: 'Trip Expenses ($)', key: 'trips', format: (val) => `$${val.toLocaleString()}` },
+                    { header: 'Total ($)', key: 'total', format: (val) => `<span class="font-bold text-green-700">$${val.toLocaleString()}</span>` },
+                ],
+                dataKey: 'financial'
+            },
+            {
+                id: 'driver',
+                name: 'Driver Performance',
+                subtitle: 'Safety scoring, behavior analysis, and violation history.',
+                icon: '<svg class="w-5 h-5 mr-3" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 19V6l4 2V6m0 0l4-2v13" /></svg>',
+                kpis: [
+                    { title: 'Average Safety Score', value: '85.3', trend: '0.5 ↑', bgColor: 'bg-green-500' },
+                    { title: 'High-Risk Drivers', value: '1', trend: '0', bgColor: 'bg-red-500' },
+                    { title: 'Total Harsh Events', value: '14', trend: '3 ↑', bgColor: 'bg-orange-500' },
+                    { title: 'Zero-Violation Drivers', value: '2', trend: '', bgColor: 'bg-indigo-500' },
+                ],
+                columns: [
+                    { header: 'Driver', key: 'driver', class: 'font-semibold text-gray-800' },
+                    { header: 'Safety Score', key: 'safetyScore', format: (val) => `<span class="px-3 py-1 text-xs rounded-full font-bold ${val >= 85 ? 'bg-green-100 text-green-800' : val >= 70 ? 'bg-yellow-100 text-yellow-800' : 'bg-red-100 text-red-800'}">${val}</span>` },
+                    { header: 'Harsh Braking (Mo.)', key: 'harshBraking' },
+                    { header: 'Speeding Alerts (Mo.)', key: 'speedingAlerts' },
+                    { header: 'Violations', key: 'violations' },
+                ],
+                dataKey: 'driver'
+            },
+        ];
+
+        let activeReportId = 'operational';
+
+        // --- Core Functions ---
+
+        /**
+         * Shows a transient message notification (simulating toast).
+         */
+        function showMessage(text) {
+            const box = document.getElementById('message-box');
+            box.textContent = text;
+            box.classList.remove('opacity-0', 'pointer-events-none');
+            box.classList.add('opacity-100');
+            setTimeout(() => {
+                box.classList.remove('opacity-100');
+                box.classList.add('opacity-0', 'pointer-events-none');
+            }, 4000);
+        }
+        
+        /**
+         * Renders the KPIs section.
+         */
+        function renderKPIs(kpis) {
+            return `
+                <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6 mb-8">
+                    ${kpis.map(kpi => `
+                        <div class="data-card bg-white p-6 rounded-xl border-l-4 ${kpi.bgColor.replace('bg-', 'border-')} flex items-center justify-between">
+                            <div>
+                                <p class="text-sm font-medium text-gray-500 mb-1">${kpi.title}</p>
+                                <p class="text-3xl font-extrabold text-gray-900">${kpi.value}</p>
+                                <p class="text-sm mt-1 font-semibold ${kpi.trend.includes('↑') ? 'text-green-600' : 'text-red-600'}">
+                                    ${kpi.trend} vs Last Month
+                                </p>
+                            </div>
+                        </div>
+                    `).join('')}
+                </div>
+            `;
+        }
+
+        /**
+         * Renders the data table.
+         */
+        function renderTable(data, columns) {
+            const headerRow = columns.map(col => `
+                <th scope="col" class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">${col.header}</th>
+            `).join('');
+
+            const dataRows = data.map(row => `
+                <tr class="hover:bg-gray-50 transition-colors">
+                    ${columns.map(col => {
+                        let value = row[col.key];
+                        if (col.format) {
+                            value = col.format(value);
+                        } else if (col.class && col.class.includes('rounded-full')) {
+                            // Status badge case (handled by format)
+                        }
+                        
+                        return `<td class="px-6 py-4 whitespace-nowrap text-sm ${col.class || 'text-gray-900'}">${value}</td>`;
+                    }).join('')}
+                </tr>
+            `).join('');
+
+            return `
+                <div class="bg-white rounded-xl shadow-lg overflow-x-auto mt-8">
+                    <table class="min-w-full divide-y divide-gray-200">
+                        <thead class="bg-gray-50"><tr>${headerRow}</tr></thead>
+                        <tbody class="bg-white divide-y divide-gray-200">${dataRows}</tbody>
+                    </table>
+                </div>
+            `;
+        }
+
+        /**
+         * Renders a mock chart/visualization placeholder.
+         */
+        function renderMockChart(title, description, height = 'h-52', cols = 'lg:col-span-1') {
+            return `
+                <div class="${cols} bg-gray-50 p-4 rounded-xl shadow-inner border border-dashed border-gray-300">
+                    <h3 class="text-lg font-semibold text-gray-700">${title}</h3>
+                    <p class="text-sm text-gray-500 mb-2">${description}</p>
+                    <div class="w-full ${height} bg-white flex items-center justify-center text-gray-400 font-mono text-xs rounded-lg border">
+                        [Data Visualization Mockup: Chart or Graph]
+                    </div>
+                </div>
+            `;
+        }
+
+        /**
+         * Handles the simulated export functionality.
+         */
+        window.handleExport = function(format) {
+            const report = REPORTS.find(r => r.id === activeReportId);
+            showMessage(`Exporting to ${format} for ${report.name}... (Simulated email distribution triggered.)`);
+        };
+
+        /**
+         * Renders the main content for the active report section.
+         */
+        function renderSection(reportId) {
+            activeReportId = reportId;
+            const report = REPORTS.find(r => r.id === reportId);
+            const data = MOCK_DATA[reportId];
+            const contentDiv = document.getElementById('dashboard-content').querySelector('.bg-white');
+
+            // 1. Title and Subtitle
+            let html = `
+                <div class="mb-6 border-b pb-2">
+                    <h2 class="text-3xl font-bold text-gray-900">${report.name}</h2>
+                    <p class="text-gray-500">${report.subtitle}</p>
+                </div>
+            `;
+
+            // 2. Export Buttons
+            html += `
+                <div class="flex justify-end space-x-3 mb-6">
+                    <button onclick="handleExport('CSV')" class="px-4 py-2 bg-gray-700 text-white text-sm font-medium rounded-lg hover:bg-gray-800 transition duration-150 flex items-center space-x-2 shadow-md">
+                        ${REPORTS[0].icon.replace('mr-3', '')}<span>Export to CSV</span>
+                    </button>
+                    <button onclick="handleExport('Excel')" class="px-4 py-2 bg-gray-700 text-white text-sm font-medium rounded-lg hover:bg-gray-800 transition duration-150 flex items-center space-x-2 shadow-md">
+                        ${REPORTS[0].icon.replace('mr-3', '')}<span>Export to Excel</span>
+                    </button>
+                    <button onclick="handleExport('PDF')" class="px-4 py-2 bg-gray-700 text-white text-sm font-medium rounded-lg hover:bg-gray-800 transition duration-150 flex items-center space-x-2 shadow-md">
+                        ${REPORTS[0].icon.replace('mr-3', '')}<span>Export to PDF</span>
+                    </button>
+                </div>
+            `;
+
+            // 3. KPIs
+            html += renderKPIs(report.kpis);
+
+            // 4. Charts and Table
+            if (reportId === 'operational') {
+                html += `<div class="grid grid-cols-1 lg:grid-cols-3 gap-6 mb-8">
+                            <div class="lg:col-span-2">${renderTable(data, report.columns)}</div>
+                            <div class="lg:col-span-1 space-y-6">
+                                ${renderMockChart('Utilization Trend by Vehicle Type', 'Monthly utilization rates comparison.', 'h-32', 'lg:col-span-1')}
+                                ${renderMockChart('Mileage vs. Fuel Cost Scatter', 'Identifying high-cost, low-mileage vehicles.', 'h-32', 'lg:col-span-1')}
+                            </div>
+                        </div>`;
+            } else if (reportId === 'compliance') {
+                 html += `<h3 class="text-xl font-semibold text-gray-800 mb-4">Compliance Status Table</h3>`;
+                 html += renderTable(data, report.columns);
+            } else if (reportId === 'financial') {
+                html += `<div class="grid grid-cols-1 lg:grid-cols-2 gap-6 mb-8">
+                            ${renderMockChart('Quarterly Fuel Consumption Trend', 'Cost per mile (CPM) and total fuel spend over time.', 'h-52', 'lg:col-span-1')}
+                            ${renderMockChart('Cost Center Breakdown (Pie Chart)', 'Allocation of total operational budget by department.', 'h-52', 'lg:col-span-1')}
+                        </div>`;
+                 html += `<h3 class="text-xl font-semibold text-gray-800 mb-4">Cost Center Allocation Table</h3>`;
+                 html += renderTable(data, report.columns);
+            } else if (reportId === 'driver') {
+                html += `<div class="grid grid-cols-1 lg:grid-cols-3 gap-6 mb-8">
+                            ${renderMockChart('Behavior Analysis: Speeding vs. Braking', 'Distribution of critical driving events.', 'h-52', 'lg:col-span-1')}
+                            ${renderMockChart('Violation History Trend', 'Quarterly trend of driver violation severity.', 'h-52', 'lg:col-span-1')}
+                        </div>`;
+                 html += `<h3 class="text-xl font-semibold text-gray-800 mb-4">Driver Safety Score Breakdown</h3>`;
+                 html += renderTable(data, report.columns);
+            }
+
+
+            contentDiv.innerHTML = html;
+            
+            // Update active navigation style
+            document.querySelectorAll('#nav-sidebar button').forEach(button => {
+                button.classList.remove('bg-indigo-600', 'text-white', 'shadow-lg');
+                button.classList.add('text-gray-700', 'hover:bg-gray-100', 'hover:text-indigo-600');
+                if (button.id === `nav-${reportId}`) {
+                    button.classList.add('bg-indigo-600', 'text-white', 'shadow-lg');
+                    button.classList.remove('text-gray-700', 'hover:bg-gray-100', 'hover:text-indigo-600');
+                }
+            });
+        }
+
+        /**
+         * Renders the static navigation bar.
+         */
+        function renderNavigation() {
+            const navSidebar = document.getElementById('nav-sidebar');
+            navSidebar.innerHTML = REPORTS.map(item => `
+                <button
+                    id="nav-${item.id}"
+                    onclick="renderSection('${item.id}')"
+                    class="flex items-center px-4 py-3 rounded-lg text-sm font-medium transition duration-150 whitespace-nowrap flex-shrink-0
+                        text-gray-700 hover:bg-gray-100 hover:text-indigo-600"
+                >
+                    ${item.icon}
+                    <span>${item.name}</span>
+                </button>
+            `).join('');
+        }
+
+        // --- Initialization ---
+        document.addEventListener('DOMContentLoaded', () => {
+            renderNavigation();
+            // Load the initial operational report
+            renderSection('operational');
+        });
+
+    </script>
+
+
+<footer style="margin-top:2rem;padding:1rem;text-align:center;font-size:0.85rem;background:#f3f4f6;border-top:1px solid #e5e7eb;">
+  <span style="font-weight:600;">Moto50 Prototype Navigation:</span>
+  <a href="landingPage.html" style="margin:0 0.25rem;color:#2563eb;text-decoration:underline;">Home</a>·
+  <a href="login.html" style="margin:0 0.25rem;color:#2563eb;text-decoration:underline;">Login</a>·
+  <a href="admin.html" style="margin:0 0.25rem;color:#2563eb;text-decoration:underline;">Admin</a>·
+  <a href="driver1.html" style="margin:0 0.25rem;color:#2563eb;text-decoration:underline;">Driver</a>·
+  <a href="non-drivers1.html" style="margin:0 0.25rem;color:#2563eb;text-decoration:underline;">Non-Driver</a>·
+  <a href="finance5.html" style="margin:0 0.25rem;color:#2563eb;text-decoration:underline;">Finance</a>·
+  <a href="license4.html" style="margin:0 0.25rem;color:#2563eb;text-decoration:underline;">License Checks</a>·
+  <a href="waiver_request.html" style="margin:0 0.25rem;color:#2563eb;text-decoration:underline;">Waiver Requests</a>·
+  <a href="reports.html" style="margin:0 0.25rem;color:#2563eb;text-decoration:underline;">Reports</a>·
+  <a href="AdmiAudit.html" style="margin:0 0.25rem;color:#2563eb;text-decoration:underline;">Audit & Compliance</a>
+</footer>
+
+</body>
+</html>
